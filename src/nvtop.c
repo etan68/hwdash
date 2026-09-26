@@ -369,6 +369,7 @@ int main(int argc, char **argv) {
         gpuinfo_utilisation_rate(&monitoredGpus);
         gpuinfo_fix_dynamic_info_from_process_info(&monitoredGpus);
       }
+      host_metrics_refresh(interface);
       save_current_data_to_ring(&monitoredGpus, interface);
       timeout(interface_update_interval(interface));
       time_slept = 0.;

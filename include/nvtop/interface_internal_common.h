@@ -23,6 +23,7 @@
 #define INTERFACE_INTERNAL_COMMON_H__
 
 #include "nvtop/common.h"
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface_options.h"
 #include "nvtop/interface_ring_buffer.h"
 #include "nvtop/time.h"
@@ -112,10 +113,42 @@ struct plot_window {
   unsigned devices_ids[MAX_LINES_PER_PLOT];
 };
 
+// Number of samples kept for the host CPU/RAM history curves (one sample per
+// refresh interval)
+#define HOST_METRICS_HISTORY_SIZE 60
+
+// Number of rows of the host panel in "full" mode (value row + history curves)
+#define HOST_PANEL_FULL_ROWS 5
+
+// Minimum terminal width for the host panels to be drawn side by side in full mode
+#define HOST_PANEL_FULL_MIN_WIDTH 36
+
+struct host_metrics_panel {
+  bool full_mode;               // True when the panel has room for the history curves
+  host_cpu_sampler cpu_sampler;
+  bool cpu_sample_valid;        // True when the last CPU refresh produced a valid utilization
+  bool cpu_refresh_enabled;     // CPU panel state at the previous refresh (toggle detection)
+  double cpu_percent;
+  host_meminfo ram_info;
+  bool ram_sample_valid;        // True when the last RAM refresh produced valid usage
+  bool ram_refresh_enabled;     // RAM panel state at the previous refresh (toggle detection)
+  double ram_used_gib;
+  double ram_total_gib;
+  double ram_percent;
+  interface_ring_buffer cpu_history;
+  interface_ring_buffer ram_history;
+  WINDOW *band_win;             // Compact summary row
+  WINDOW *cpu_val_win;          // CPU current value row (full mode only)
+  WINDOW *ram_val_win;          // RAM current value row (full mode only)
+  WINDOW *cpu_curve_win;        // CPU history curve (full mode only)
+  WINDOW *ram_curve_win;        // RAM history curve (full mode only)
+};
+
 enum setup_window_section {
   setup_general_selected,
   setup_header_selected,
   setup_chart_selected,
+  setup_host_selected,
   setup_process_list_selected,
   setup_monitored_gpu_list_selected,
   setup_window_selection_count
@@ -144,6 +177,7 @@ struct nvtop_interface {
   struct plot_window *plots;
   interface_ring_buffer saved_data_ring;
   struct setup_window setup_win;
+  struct host_metrics_panel host;
 };
 
 enum device_field {

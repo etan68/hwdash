@@ -19,6 +19,7 @@
  *
  */
 
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface_setup_win.h"
 #include "nvtop/interface.h"
 #include <string.h>
@@ -28,8 +29,8 @@
 
 #include <ncurses.h>
 
-static char *setup_window_category_names[setup_window_selection_count] = {"General", "Devices", "Chart", "Processes",
-                                                                          "GPU Select"};
+static char *setup_window_category_names[setup_window_selection_count] = {"General",  "Devices", "Chart", "Host",
+                                                                          "Processes", "GPU Select"};
 
 // All the windows used to display the setup
 enum setup_window_type {
@@ -83,6 +84,17 @@ static const char *setup_chart_gpu_value_descriptions[plot_information_count] = 
     "%s temperature",       "Power draw rate (current/max)", "Fan speed",         "%s clock rate",
     "%s memory clock rate", "Effective load rate",           "PCIe RX load rate", "PCIe TX load rate",
     "HVX utilization rate", "HMX utilization rate"};
+
+// Host Options
+
+enum setup_host_options {
+  setup_host_cpu_panel,
+  setup_host_ram_panel,
+  setup_host_options_count
+};
+
+static const char *setup_host_option_descriptions[setup_host_options_count] = {
+    "Show host CPU utilization panel (whole machine)", "Show host RAM usage panel (whole machine)"};
 
 // Formats the description of a plot metric for the given compute unit label.
 // Descriptions without a unit placeholder (power, fan, ...) are returned as-is.
@@ -320,6 +332,47 @@ static void draw_setup_window_header(struct nvtop_interface *interface) {
   if (interface->setup_win.indentation_level == 1 &&
       interface->setup_win.options_selected[0] == setup_header_gpu_info_bar) {
     mvwchgat(options_win, setup_header_gpu_info_bar + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
+  }
+  wnoutrefresh(options_win);
+}
+
+static void draw_setup_window_host(struct nvtop_interface *interface) {
+  if (interface->setup_win.indentation_level > 1)
+    interface->setup_win.indentation_level = 1;
+  if (interface->setup_win.options_selected[0] >= setup_host_options_count)
+    interface->setup_win.options_selected[0] = setup_host_options_count - 1;
+
+  WINDOW *options_win = interface->setup_win.single;
+
+  wattr_set(options_win, A_STANDOUT, green_color, NULL);
+  mvwprintw(options_win, 0, 0, "Host Options");
+  wstandend(options_win);
+
+  unsigned int cur_col, maxcols, tmp;
+  (void)tmp;
+  getmaxyx(options_win, tmp, maxcols);
+  getyx(options_win, tmp, cur_col);
+  mvwchgat(options_win, 0, cur_col, maxcols - cur_col, A_STANDOUT, green_color, NULL);
+
+  bool supported = host_metrics_platform_supported();
+  for (unsigned i = 0; i < setup_host_options_count; ++i) {
+    bool enabled = false;
+    if (i == setup_host_cpu_panel)
+      enabled = interface->options.show_host_cpu_panel;
+    if (i == setup_host_ram_panel)
+      enabled = interface->options.show_host_ram_panel;
+    if (!supported)
+      enabled = false;
+    char description[128];
+    if (supported)
+      snprintf(description, sizeof(description), "%s", setup_host_option_descriptions[i]);
+    else
+      snprintf(description, sizeof(description), "%s (unsupported on this platform)",
+               setup_host_option_descriptions[i]);
+    mvwprintw(options_win, i + 1, 0, "[%c] %.*s", option_state_char(enabled ? option_on : option_off), maxcols,
+              description);
+    if (interface->setup_win.indentation_level == 1 && interface->setup_win.options_selected[0] == i)
+      mvwchgat(options_win, i + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
   }
   wnoutrefresh(options_win);
 }
@@ -695,6 +748,9 @@ void draw_setup_window(unsigned devices_count, struct list_head *devices, struct
   case setup_chart_selected:
     draw_setup_window_chart(devices_count, devices, interface);
     break;
+  case setup_host_selected:
+    draw_setup_window_host(interface);
+    break;
   case setup_process_list_selected:
     draw_setup_window_proc_list(interface);
     break;
@@ -831,6 +887,17 @@ void handle_setup_win_keypress(int keyId, struct nvtop_interface *interface) {
           }
           if (interface->setup_win.options_selected[0] == setup_header_gpu_info_bar) {
             interface->options.has_gpu_info_bar = !interface->options.has_gpu_info_bar;
+          }
+        }
+      }
+      // Host Options
+      if (interface->setup_win.selected_section == setup_host_selected) {
+        if (interface->setup_win.indentation_level == 1 && host_metrics_platform_supported()) {
+          if (interface->setup_win.options_selected[0] == setup_host_cpu_panel) {
+            interface->options.show_host_cpu_panel = !interface->options.show_host_cpu_panel;
+          }
+          if (interface->setup_win.options_selected[0] == setup_host_ram_panel) {
+            interface->options.show_host_ram_panel = !interface->options.show_host_ram_panel;
           }
         }
       }

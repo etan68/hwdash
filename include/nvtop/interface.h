@@ -43,6 +43,10 @@ void draw_gpu_info_ncurses(unsigned monitored_dev_count, struct list_head *devic
 
 void save_current_data_to_ring(struct list_head *devices, struct nvtop_interface *interface);
 
+// Sample whole-host CPU utilization and RAM usage (Linux only); call at most
+// once per refresh interval.
+void host_metrics_refresh(struct nvtop_interface *interface);
+
 void update_window_size_to_terminal_size(struct nvtop_interface *inter);
 
 void interface_key(int keyId, struct nvtop_interface *inter);

@@ -9,6 +9,7 @@ if (BUILD_TESTING AND GTest_FOUND)
     ${PROJECT_SOURCE_DIR}/src/extract_processinfo_fdinfo.c
     ${PROJECT_SOURCE_DIR}/src/interface_options.c
     ${PROJECT_SOURCE_DIR}/src/pcie_utilization.c
+    ${PROJECT_SOURCE_DIR}/src/host_metrics.c
     ${PROJECT_SOURCE_DIR}/src/ini.c
   )
   target_include_directories(testLib PUBLIC
@@ -22,6 +23,14 @@ if (BUILD_TESTING AND GTest_FOUND)
   )
   target_link_libraries(interfaceTests PRIVATE testLib GTest::gtest_main)
   gtest_discover_tests(interfaceTests)
+
+  # Host CPU/RAM metrics tests (no GPU or network needed)
+  add_executable(
+    hostMetricsTests
+    hostMetricsTests.cpp
+  )
+  target_link_libraries(hostMetricsTests PRIVATE testLib GTest::gtest_main)
+  gtest_discover_tests(hostMetricsTests)
 
   if (THOROUGH_TESTING)
     target_compile_definitions(interfaceTests PRIVATE THOROUGH_TESTING)

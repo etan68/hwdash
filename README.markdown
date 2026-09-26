@@ -73,6 +73,33 @@ throughput as a percentage of the maximum link bandwidth).
 You can save the preferences set in the setup window by pressing ``F12``.
 The preferences will be loaded the next time you run ``nvtop``.
 
+### Whole-host CPU and RAM panels (this fork)
+
+On Linux, this fork adds separate CPU and RAM history panels below the GPU
+headers. Press **F2 → Host**, use the arrow keys to select a panel, and press
+**Enter** to enable or disable it. Leave setup with **Esc** and press **F12** to
+save. Both panels default to enabled; a single enabled panel uses the full width.
+GPU metrics and the GPU process list keep their existing behavior.
+
+- **CPU** is whole-machine utilization, normalized to 0–100% across all cores,
+  sampled from successive aggregate `/proc/stat` readings. Idle and I/O wait
+  count as idle; guest execution counts as busy once.
+- **RAM** shows used/total GiB and usage percentage, using
+  `MemTotal - MemAvailable` from `/proc/meminfo`. This includes the kernel's
+  estimate of reclaimable memory and is not a sum of process RSS values.
+- Panels use the existing update interval (one second by default) and a short
+  in-memory history. A narrow or short terminal falls back to a compact summary;
+  if no space remains, the host band is hidden. Ordinary resize preserves history.
+- First CPU sampling and unavailable readings show `n/a`. Sampling gaps or
+  re-enabling a panel restart its history. These are live charts, not a persistent
+  metrics database. On non-Linux platforms the host options are disabled.
+
+To try this fork without replacing an existing nvtop or its settings, build it
+normally and run `./build/src/nvtop --config-file /tmp/nvtop-host.ini`.
+
+The settings are stored as `HostCpuPanel` and `HostRamPanel` under `[HostOption]`.
+Older configuration files without this section use the platform defaults.
+
 ### NVTOP Manual and Command line Options
 
 NVTOP comes with a manpage!

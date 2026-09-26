@@ -19,6 +19,7 @@
  *
  */
 
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface_options.h"
 #include "ini.h"
 #include "nvtop/extract_processinfo_fdinfo.h"
@@ -130,6 +131,9 @@ void alloc_interface_options_internals(char *config_location, unsigned num_devic
   options->filter_nvtop_pid = true;
   options->hide_processes_list = false;
   options->has_gpu_info_bar = false;
+  // Host panels default to enabled on platforms that support them
+  options->show_host_cpu_panel = host_metrics_platform_supported();
+  options->show_host_ram_panel = host_metrics_platform_supported();
   options->gpu_plot_color_idx[0] = 1;  // Cyan
   options->gpu_plot_color_idx[1] = 3;  // Yellow
   options->gpu_plot_color_idx[2] = 2;  // Green
@@ -185,6 +189,10 @@ static const char *chart_value_gpu_plot_color[MAX_LINES_PER_PLOT] = {
 static const char *plot_color_names[] = {
     "Red", "Cyan", "Green", "Yellow", "Blue", "Magenta", "White"};
 static const unsigned plot_color_names_count = 7;
+
+static const char host_section[] = "HostOption";
+static const char host_value_cpu_panel[] = "HostCpuPanel";
+static const char host_value_ram_panel[] = "HostRamPanel";
 
 static const char process_list_section[] = "ProcessListOption";
 static const char process_hide_nvtop_process_list[] = "HideNvtopProcessList";
@@ -272,6 +280,25 @@ static int nvtop_option_ini_handler(void *user, const char *section, const char 
           if (strcmp(value, plot_color_names[i]) == 0)
             ini_data->options->gpu_plot_color_idx[s] = i;
         }
+      }
+    }
+  }
+  // Host Options
+  if (strcmp(section, host_section) == 0) {
+    if (strcmp(name, host_value_cpu_panel) == 0) {
+      if (strcmp(value, "true") == 0) {
+        ini_data->options->show_host_cpu_panel = true;
+      }
+      if (strcmp(value, "false") == 0) {
+        ini_data->options->show_host_cpu_panel = false;
+      }
+    }
+    if (strcmp(name, host_value_ram_panel) == 0) {
+      if (strcmp(value, "true") == 0) {
+        ini_data->options->show_host_ram_panel = true;
+      }
+      if (strcmp(value, "false") == 0) {
+        ini_data->options->show_host_ram_panel = false;
       }
     }
   }
@@ -420,6 +447,11 @@ bool save_interface_options_to_config_file(unsigned total_dev_count, const nvtop
   fprintf(config_file, "%s = %s\n", header_value_use_fahrenheit, boolean_string(options->temperature_in_fahrenheit));
   fprintf(config_file, "%s = %e\n", header_value_encode_decode_timer, options->encode_decode_hiding_timer);
   fprintf(config_file, "%s = %s\n", header_value_gpu_info_bar, boolean_string(options->has_gpu_info_bar));
+
+  // Host Options
+  fprintf(config_file, "\n[%s]\n", host_section);
+  fprintf(config_file, "%s = %s\n", host_value_cpu_panel, boolean_string(options->show_host_cpu_panel));
+  fprintf(config_file, "%s = %s\n", host_value_ram_panel, boolean_string(options->show_host_ram_panel));
 
   // Chart Options
   fprintf(config_file, "\n[%s]\n", chart_section);

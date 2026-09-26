@@ -506,6 +506,48 @@ static unsigned device_length(void) {
 
 static pid_t nvtop_pid;
 
+// Creates the host panel windows for the reserved band position.
+// In full mode a single enabled panel spans the full band width; with both
+// panels enabled the CPU and RAM halves share the width. The drawing width
+// of the curve windows is independent of the history capacity: the curve
+// renderer only ever reads stored samples and draws inside the window.
+static void alloc_host_panel_windows(struct nvtop_interface *interface, const struct window_position *position) {
+  interface->host.full_mode = false;
+  interface->host.band_win = NULL;
+  interface->host.cpu_val_win = NULL;
+  interface->host.ram_val_win = NULL;
+  interface->host.cpu_curve_win = NULL;
+  interface->host.ram_curve_win = NULL;
+  if (position->sizeY == 0 || position->sizeX < 2)
+    return;
+  if (position->sizeY >= HOST_PANEL_FULL_ROWS) {
+    // Full mode: value row on top, history curves below
+    bool cpu_enabled = interface->options.show_host_cpu_panel && host_metrics_platform_supported();
+    bool ram_enabled = interface->options.show_host_ram_panel && host_metrics_platform_supported();
+    if (!cpu_enabled && !ram_enabled)
+      return; // Nothing to display in full mode
+    bool split = cpu_enabled && ram_enabled;
+    unsigned cpu_width = split ? position->sizeX / 2 : position->sizeX;
+    unsigned ram_width = split ? position->sizeX - cpu_width : position->sizeX;
+    unsigned ram_x = position->posX + (split ? cpu_width : 0);
+    if (split && (cpu_width < 2 || ram_width < 2))
+      return;
+    unsigned curve_rows = position->sizeY - 1;
+    if (cpu_enabled) {
+      interface->host.cpu_val_win = newwin(1, cpu_width, position->posY, position->posX);
+      interface->host.cpu_curve_win = newwin(curve_rows, cpu_width, position->posY + 1, position->posX);
+    }
+    if (ram_enabled) {
+      interface->host.ram_val_win = newwin(1, ram_width, position->posY, ram_x);
+      interface->host.ram_curve_win = newwin(curve_rows, ram_width, position->posY + 1, ram_x);
+    }
+    interface->host.full_mode = true;
+    return;
+  }
+  // Compact mode: a single full-width summary row
+  interface->host.band_win = newwin(1, position->sizeX, position->posY, position->posX);
+}
+
 static void initialize_all_windows(struct nvtop_interface *dwin) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
@@ -522,10 +564,20 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
   // any_device_has_nvlink_active is set by the probe that runs before this function.
   nvtop_adjust_field_sizes_for_nvlink();
 
+  // Host CPU/RAM panels: reserve a full-width band below the device headers.
+  // Full mode (value row + history curves) needs width, otherwise fall back
+  // to a single compact summary row.
+  bool host_cpu_visible = dwin->options.show_host_cpu_panel && host_metrics_platform_supported();
+  bool host_ram_visible = dwin->options.show_host_ram_panel && host_metrics_platform_supported();
+  struct window_position host_position;
+  unsigned host_band_rows = 0;
+  if (host_cpu_visible || host_ram_visible)
+    host_band_rows = cols >= HOST_PANEL_FULL_MIN_WIDTH ? HOST_PANEL_FULL_ROWS : 1;
+
   compute_sizes_from_layout(devices_count, dwin->options.has_gpu_info_bar ? 4 : 3, device_length(), rows - 1, cols,
                             dwin->options.gpu_specific_opts, dwin->options.process_fields_displayed, device_positions,
                             &dwin->num_plots, plot_positions, map_device_to_plot, &process_position, &setup_position,
-                            dwin->options.hide_processes_list);
+                            dwin->options.hide_processes_list, host_band_rows, &host_position);
 
   alloc_plot_window(devices_count, plot_positions, map_device_to_plot, dwin);
 
@@ -540,6 +592,7 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
   dwin->shortcut_window = newwin(1, cols, rows - 1, 0);
 
   alloc_setup_window(&setup_position, &dwin->setup_win);
+  alloc_host_panel_windows(dwin, &host_position);
   nvtop_pid = getpid();
 }
 
@@ -560,6 +613,22 @@ static void delete_all_windows(struct nvtop_interface *dwin) {
   }
   free_setup_window(&dwin->setup_win);
   free(dwin->plots);
+  if (dwin->host.band_win)
+    delwin(dwin->host.band_win);
+  if (dwin->host.cpu_val_win)
+    delwin(dwin->host.cpu_val_win);
+  if (dwin->host.ram_val_win)
+    delwin(dwin->host.ram_val_win);
+  if (dwin->host.cpu_curve_win)
+    delwin(dwin->host.cpu_curve_win);
+  if (dwin->host.ram_curve_win)
+    delwin(dwin->host.ram_curve_win);
+  dwin->host.band_win = NULL;
+  dwin->host.cpu_val_win = NULL;
+  dwin->host.ram_val_win = NULL;
+  dwin->host.cpu_curve_win = NULL;
+  dwin->host.ram_curve_win = NULL;
+  dwin->host.full_mode = false;
 }
 
 static const NCURSES_COLOR_T plot_terminal_colors[] = {COLOR_RED,  COLOR_CYAN,    COLOR_GREEN, COLOR_YELLOW,
@@ -621,6 +690,10 @@ struct nvtop_interface *initialize_curses(unsigned total_devices, unsigned devic
   }
 
   interface_alloc_ring_buffer(devices_count, 4, 10 * 60 * 1000, &interface->saved_data_ring);
+  // Host CPU/RAM history rings are allocated once and preserved across
+  // resizes; the curve drawing width is independent of the history capacity
+  interface_alloc_ring_buffer(1, 1, HOST_METRICS_HISTORY_SIZE, &interface->host.cpu_history);
+  interface_alloc_ring_buffer(1, 1, HOST_METRICS_HISTORY_SIZE, &interface->host.ram_history);
   initialize_all_windows(interface);
   return interface;
 }
@@ -636,6 +709,8 @@ void clean_ncurses(struct nvtop_interface *interface) {
   free(interface->options.config_file_location);
   free(interface->devices_win);
   interface_free_ring_buffer(&interface->saved_data_ring);
+  interface_free_ring_buffer(&interface->host.cpu_history);
+  interface_free_ring_buffer(&interface->host.ram_history);
   free(interface);
 }
 
@@ -1954,6 +2029,58 @@ static void draw_shortcuts(struct nvtop_interface *interface) {
   }
 }
 
+// Sample whole-host CPU utilization and RAM usage. Called at most once per
+// refresh interval from the main loop; unavailable data is reported as such
+// rather than as zero load.
+void host_metrics_refresh(struct nvtop_interface *interface) {
+  if (!host_metrics_platform_supported())
+    return;
+  bool cpu_enabled = interface->options.show_host_cpu_panel;
+  bool ram_enabled = interface->options.show_host_ram_panel;
+  // Disabling and re-enabling a panel restarts its history and baseline:
+  // samples taken before the panel was hidden must not be displayed as if
+  // they had been collected continuously up to now.
+  if (cpu_enabled && !interface->host.cpu_refresh_enabled) {
+    interface_ring_buffer_empty_select(&interface->host.cpu_history, 0, 0);
+    interface->host.cpu_sampler.has_prev = false;
+    interface->host.cpu_sample_valid = false;
+  }
+  interface->host.cpu_refresh_enabled = cpu_enabled;
+  if (ram_enabled && !interface->host.ram_refresh_enabled) {
+    interface_ring_buffer_empty_select(&interface->host.ram_history, 0, 0);
+    interface->host.ram_sample_valid = false;
+  }
+  interface->host.ram_refresh_enabled = ram_enabled;
+
+  if (cpu_enabled) {
+    host_cpu_stat sample;
+    bool read_ok = host_metrics_read_cpu_stat("/proc/stat", &sample);
+    interface->host.cpu_sample_valid =
+        read_ok && host_metrics_cpu_sampler_update(&interface->host.cpu_sampler, &sample, &interface->host.cpu_percent);
+    if (interface->host.cpu_sample_valid) {
+      interface_ring_buffer_push(&interface->host.cpu_history, 0, 0, (unsigned)(interface->host.cpu_percent + 0.5));
+    } else {
+      // Restart history at a sampling gap. A valid first/reset sample primes
+      // the next delta; only a read failure discards that baseline.
+      interface_ring_buffer_empty_select(&interface->host.cpu_history, 0, 0);
+      if (!read_ok)
+        interface->host.cpu_sampler.has_prev = false;
+    }
+  }
+  if (ram_enabled) {
+    if (host_metrics_read_meminfo("/proc/meminfo", &interface->host.ram_info) &&
+        host_metrics_ram_usage(&interface->host.ram_info, &interface->host.ram_used_gib,
+                               &interface->host.ram_total_gib, &interface->host.ram_percent)) {
+      interface->host.ram_sample_valid = true;
+      interface_ring_buffer_push(&interface->host.ram_history, 0, 0,
+                                 (unsigned)(interface->host.ram_percent + 0.5));
+    } else {
+      interface->host.ram_sample_valid = false;
+      interface_ring_buffer_empty_select(&interface->host.ram_history, 0, 0);
+    }
+  }
+}
+
 void save_current_data_to_ring(struct list_head *devices, struct nvtop_interface *interface) {
   struct gpu_info *device;
   unsigned dev_id = 0;
@@ -2164,10 +2291,207 @@ static void draw_plots(struct list_head *devices, struct nvtop_interface *interf
   }
 }
 
+// Maps a 0-100 percentage to a window row: 100% is the top row, 0% the bottom.
+static unsigned host_curve_row_for(unsigned rows, double value) {
+  if (value < 0.)
+    value = 0.;
+  if (value > 100.)
+    value = 100.;
+  unsigned row = (unsigned)(rows - 1 - (value * (double)(rows - 1)) / 100. + 0.5);
+  if (row >= rows)
+    row = rows - 1;
+  return row;
+}
+
+// Draws one host history curve (percent, 0-100) directly from the ring
+// buffer, so the drawing width (window columns) stays independent of the
+// history capacity. Only stored samples are drawn, from left to right, and
+// the columns before the oldest sample stay blank: prehistory and failed
+// samples never appear as a valid zero load.
+static void draw_host_curve(WINDOW *curve_win, const struct nvtop_interface *interface,
+                            const interface_ring_buffer *history, bool sample_valid) {
+  werase(curve_win);
+  int rows, cols;
+  getmaxyx(curve_win, rows, cols);
+  if (rows < 2 || cols < 2) {
+    wnoutrefresh(curve_win);
+    return;
+  }
+  unsigned stored = interface_ring_buffer_data_stored(history, 0, 0);
+  if (!sample_valid || stored == 0) {
+    wcolor_set(curve_win, magenta_color, NULL);
+    mvwprintw(curve_win, rows / 2, 1, "n/a");
+    wstandend(curve_win);
+    wnoutrefresh(curve_win);
+    return;
+  }
+  // Most recent samples that fit the window: the newest sample sits at the
+  // right edge, or at the left edge when the plot direction is reversed
+  unsigned max_copy = stored < (unsigned)cols ? stored : (unsigned)cols;
+  unsigned first_col = interface->options.plot_left_to_right ? 0 : (unsigned)cols - max_copy;
+  wcolor_set(curve_win, cyan_color, NULL);
+  unsigned prev_row = 0;
+  for (unsigned c = 0; c < max_copy; ++c) {
+    unsigned ring_index = interface->options.plot_left_to_right ? stored - 1 - c : stored - max_copy + c;
+    unsigned col = first_col + c;
+    unsigned value = interface_ring_buffer_get(history, 0, 0, ring_index);
+    unsigned row = host_curve_row_for((unsigned)rows, (double)value);
+    if (c == 0) {
+      mvwaddch(curve_win, row, col, ACS_HLINE);
+    } else if (row == prev_row) {
+      mvwhline(curve_win, row, col, 0, 1);
+    } else {
+      unsigned top = row < prev_row ? row : prev_row;
+      unsigned bottom = row < prev_row ? prev_row : row;
+      bool rising = row < prev_row;
+      mvwaddch(curve_win, bottom, col, rising ? ACS_LRCORNER : ACS_URCORNER);
+      mvwaddch(curve_win, top, col, rising ? ACS_ULCORNER : ACS_LLCORNER);
+      if (bottom - top > 1)
+        mvwvline(curve_win, top + 1, col, 0, bottom - top - 1);
+    }
+    prev_row = row;
+  }
+  wstandend(curve_win);
+  wnoutrefresh(curve_win);
+}
+
+static void draw_host_cpu_value(WINDOW *val_win, const struct nvtop_interface *interface) {
+  werase(val_win);
+  int rows, cols;
+  getmaxyx(val_win, rows, cols);
+  (void)rows;
+  if (!interface->host.cpu_sample_valid) {
+    wcolor_set(val_win, magenta_color, NULL);
+    mvwprintw(val_win, 0, 0, "CPU: n/a");
+    wstandend(val_win);
+    wnoutrefresh(val_win);
+    return;
+  }
+  char inside[1024];
+  snprintf(inside, sizeof(inside), "%.1f%%", interface->host.cpu_percent);
+  if (cols > 11)
+    draw_percentage_meter(val_win, "CPU ", (unsigned)(interface->host.cpu_percent + 0.5), inside);
+  else
+    mvwprintw(val_win, 0, 0, "CPU %.1f%%", interface->host.cpu_percent);
+  wnoutrefresh(val_win);
+}
+
+static void draw_host_ram_value(WINDOW *val_win, const struct nvtop_interface *interface) {
+  werase(val_win);
+  int rows, cols;
+  getmaxyx(val_win, rows, cols);
+  (void)rows;
+  if (!interface->host.ram_sample_valid) {
+    wcolor_set(val_win, magenta_color, NULL);
+    mvwprintw(val_win, 0, 0, "RAM: n/a");
+    wstandend(val_win);
+    wnoutrefresh(val_win);
+    return;
+  }
+  char prelude[48];
+  snprintf(prelude, sizeof(prelude), "RAM %.2f/%.2fGiB ", interface->host.ram_used_gib,
+           interface->host.ram_total_gib);
+  char inside[1024];
+  snprintf(inside, sizeof(inside), "%.1f%%", interface->host.ram_percent);
+  if (cols > (int)strlen(prelude) + 7)
+    draw_percentage_meter(val_win, prelude, (unsigned)(interface->host.ram_percent + 0.5), inside);
+  else
+    mvwprintw(val_win, 0, 0, "%.*s", cols, prelude);
+  wnoutrefresh(val_win);
+}
+
+// Prints one host field at the left edge: the full form when it fits the
+// window width, a shorter form otherwise (so RAM used/total/% stay visible
+// when the width permits), truncating as a last resort.
+static void draw_host_field_text(WINDOW *win, int cols, const char *full_text, const char *short_text) {
+  if ((int)strlen(full_text) <= cols)
+    mvwprintw(win, 0, 0, "%s", full_text);
+  else if ((int)strlen(short_text) <= cols)
+    mvwprintw(win, 0, 0, "%s", short_text);
+  else
+    mvwprintw(win, 0, 0, "%.*s", cols, full_text);
+}
+
+static void draw_host_panels_compact(WINDOW *win, const struct nvtop_interface *interface) {
+  bool cpu_enabled = interface->options.show_host_cpu_panel && host_metrics_platform_supported();
+  bool ram_enabled = interface->options.show_host_ram_panel && host_metrics_platform_supported();
+  werase(win);
+  int rows, cols;
+  getmaxyx(win, rows, cols);
+  (void)rows;
+  if (cpu_enabled && ram_enabled) {
+    char cpu_text[32];
+    if (interface->host.cpu_sample_valid)
+      snprintf(cpu_text, sizeof(cpu_text), "Host CPU: %.1f%%", interface->host.cpu_percent);
+    else
+      snprintf(cpu_text, sizeof(cpu_text), "Host CPU: n/a");
+    mvwprintw(win, 0, 0, "%.*s", cols, cpu_text);
+    char ram_text[48];
+    if (interface->host.ram_sample_valid)
+      snprintf(ram_text, sizeof(ram_text), "Host RAM: %.2f/%.2f GiB (%.1f%%)", interface->host.ram_used_gib,
+               interface->host.ram_total_gib, interface->host.ram_percent);
+    else
+      snprintf(ram_text, sizeof(ram_text), "Host RAM: n/a");
+    int x = (int)strlen(cpu_text) + 2;
+    if (x < cols - 1)
+      mvwprintw(win, 0, x, "%.*s", cols - x, ram_text);
+  } else if (cpu_enabled) {
+    // CPU only: use the full width for a single field
+    char full[32], short_form[16];
+    if (interface->host.cpu_sample_valid) {
+      snprintf(full, sizeof(full), "Host CPU: %.1f%%", interface->host.cpu_percent);
+      snprintf(short_form, sizeof(short_form), "CPU %.1f%%", interface->host.cpu_percent);
+    } else {
+      snprintf(full, sizeof(full), "Host CPU: n/a");
+      snprintf(short_form, sizeof(short_form), "CPU n/a");
+    }
+    draw_host_field_text(win, cols, full, short_form);
+  } else {
+    // RAM only: use the full width for a single field
+    char full[48], short_form[24];
+    if (interface->host.ram_sample_valid) {
+      snprintf(full, sizeof(full), "Host RAM: %.2f/%.2f GiB (%.1f%%)", interface->host.ram_used_gib,
+               interface->host.ram_total_gib, interface->host.ram_percent);
+      snprintf(short_form, sizeof(short_form), "RAM %.2f/%.2f GiB", interface->host.ram_used_gib,
+               interface->host.ram_total_gib);
+    } else {
+      snprintf(full, sizeof(full), "Host RAM: n/a");
+      snprintf(short_form, sizeof(short_form), "RAM n/a");
+    }
+    draw_host_field_text(win, cols, full, short_form);
+  }
+  wnoutrefresh(win);
+}
+
+static void draw_host_panels(struct nvtop_interface *interface) {
+  bool cpu_enabled = interface->options.show_host_cpu_panel && host_metrics_platform_supported();
+  bool ram_enabled = interface->options.show_host_ram_panel && host_metrics_platform_supported();
+  if (!cpu_enabled && !ram_enabled)
+    return;
+  if (!interface->host.full_mode) {
+    if (interface->host.band_win)
+      draw_host_panels_compact(interface->host.band_win, interface);
+    return;
+  }
+  // Windows are only allocated for the enabled panels (the layout is rebuilt
+  // when the settings window is closed), so existing windows are enabled ones
+  if (interface->host.cpu_val_win)
+    draw_host_cpu_value(interface->host.cpu_val_win, interface);
+  if (interface->host.ram_val_win)
+    draw_host_ram_value(interface->host.ram_val_win, interface);
+  if (interface->host.cpu_curve_win)
+    draw_host_curve(interface->host.cpu_curve_win, interface, &interface->host.cpu_history,
+                    interface->host.cpu_sample_valid);
+  if (interface->host.ram_curve_win)
+    draw_host_curve(interface->host.ram_curve_win, interface, &interface->host.ram_history,
+                    interface->host.ram_sample_valid);
+}
+
 void draw_gpu_info_ncurses(unsigned devices_count, struct list_head *devices, struct nvtop_interface *interface) {
 
   draw_devices(devices, interface);
   if (!interface->setup_win.visible) {
+    draw_host_panels(interface);
     draw_plots(devices, interface);
     draw_processes(devices, interface);
   } else {

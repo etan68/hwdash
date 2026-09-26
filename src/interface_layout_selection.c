@@ -235,7 +235,8 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
                                process_field_displayed process_displayed, struct window_position *device_positions,
                                unsigned *num_plots, struct window_position plot_positions[MAX_CHARTS],
                                unsigned *map_device_to_plot, struct window_position *process_position,
-                               struct window_position *setup_position, bool process_win_hide) {
+                               struct window_position *setup_position, bool process_win_hide, unsigned host_panel_rows,
+                               struct window_position *host_panel_position) {
 
   unsigned min_rows_for_header = 0, header_stacks = 0, num_device_per_row = 0;
   num_device_per_row = max(1, cols / device_header_cols);
@@ -264,6 +265,19 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
   unsigned rows_for_process = min_rows_for_process;
   unsigned rows_for_plots = rows - min_rows_for_header - min_rows_for_process;
 
+  // Reserve a full-width band for the host CPU/RAM panels, just below the
+  // device headers. When there is not enough room for the full panel, fall
+  // back to a single compact row, or drop the band entirely. host_band_rows
+  // never exceeds rows_for_plots, so the subtraction cannot underflow.
+  unsigned host_band_rows = 0;
+  if (host_panel_position && host_panel_rows > 0) {
+    if (rows_for_plots >= host_panel_rows)
+      host_band_rows = host_panel_rows;
+    else if (host_panel_rows > 1 && rows_for_plots >= 1)
+      host_band_rows = 1;
+    rows_for_plots -= host_band_rows;
+  }
+
   unsigned num_plot_stacks = 0;
   unsigned plot_in_stack[MAX_CHARTS];
   preliminary_plot_positioning(rows_for_plots, cols, devices_count, gpuOpts, map_device_to_plot, plot_in_stack,
@@ -277,6 +291,13 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
     rows_for_header += space_for_header;
     rows_for_plots -= space_for_header;
     space_between_header_stack = true;
+  }
+
+  if (host_panel_position) {
+    host_panel_position->posX = 0;
+    host_panel_position->posY = rows_for_header;
+    host_panel_position->sizeX = host_band_rows > 0 ? cols : 0;
+    host_panel_position->sizeY = host_band_rows;
   }
 
   // Allocate additional plot stacks if there is enough vertical room
@@ -335,7 +356,7 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
     if (!process_win_hide && rows_per_stack > 23)
       rows_per_stack = 23;
     unsigned num_plot_done = 0;
-    unsigned currentPosX = 0, currentPosY = rows_for_header;
+    unsigned currentPosX = 0, currentPosY = rows_for_header + host_band_rows;
     for (unsigned stack_id = 0; stack_id < num_plot_stacks; ++stack_id) {
       unsigned plot_in_this_stack = 0;
       unsigned lines_to_draw = 0;
