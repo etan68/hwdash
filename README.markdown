@@ -25,6 +25,11 @@ Table of Contents
   - [Interactive Setup Window](#interactive-setup-window)
   - [Saving Preferences](#saving-preferences)
   - [NVTOP Manual and Command line Options](#nvtop-manual-and-command-line-options)
+- [Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)
+  - [Chart placement](#chart-placement)
+  - [Platform support](#platform-support)
+  - [Metric semantics](#metric-semantics)
+  - [Configuration keys](#configuration-keys)
 - [GPU Support](#gpu-support)
   - [AMD](#amd)
   - [Intel](#intel)
@@ -66,6 +71,11 @@ In the ``Chart`` section you can choose which metrics are plotted, including GPU
 utilization, temperature, power, clocks, and the **PCIe RX / TX load** (the receive and transmit
 throughput as a percentage of the maximum link bandwidth).
 
+In the ``General`` section you can enable or disable, independently, the **host CPU usage** and the
+**host memory usage** lines of the combined host chart (see
+[Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)). Both are enabled by default on
+Linux and disabled elsewhere. The layout is rebuilt as soon as you leave the setup window.
+
 ![NVTOP Setup Window](/screenshot/Nvtop-config.png)
 
 ### Saving Preferences
@@ -84,6 +94,78 @@ For quick command line arguments help
 nvtop -h
 nvtop --help
 ```
+
+Host CPU and Memory Monitoring
+------------------------------
+
+On Linux, ``nvtop`` can also report the whole host, next to the GPU metrics. The whole host CPU
+utilization and the whole host memory utilization share a single **host chart**, the way the GPU
+utilization and the GPU memory share a GPU chart: one percentage history line per enabled metric,
+drawn by the same plot renderer, with the same ``0/25/50/75/100`` scale, the same border and the
+same time axis.
+
+### Chart placement
+
+- The host chart is an ordinary chart: it gets the same outer dimensions, the same row height, the
+  same full chart row width, and the same resize and narrow terminal behaviour as the GPU charts.
+- The charts are stacked vertically, one full chart immediately below the previous one: the host
+  chart owns the first chart row, directly below the device headers, the GPU chart rows follow it in
+  their usual order and grouping, and the process list stays below the charts. The host chart never
+  shares a row with a GPU chart, and it never takes a column away from one either: the GPU charts
+  keep their original order, grouping and widths, while all chart rows share the available vertical
+  space equally, within the existing minimum chart height and process-list behaviour.
+- Enabling one metric draws one line in that chart, enabling both draws two lines, and disabling
+  both removes the chart entirely: no space is reserved for it.
+- On very small terminals the host chart is dropped like any chart that does not fit, rather than
+  eating into the GPU information: it is drawn as soon as the chart area can hold one more chart
+  row. It never overlaps the GPU headers, the plots, the process list or the shortcut line, and it
+  is re-laid out whenever the terminal is resized or an option changes.
+- The history curves are kept when the window is resized: only the drawing surface is recomputed.
+
+### Platform support
+
+Whole host metrics are collected on **Linux only**, from the ``/proc`` filesystem:
+
+- CPU utilization from the aggregate ``cpu`` line of ``/proc/stat``;
+- memory usage from ``MemTotal`` and ``MemAvailable`` in ``/proc/meminfo``.
+
+Other operating systems keep building; they simply have no host metrics, and the lines default to
+disabled there. If they are enabled by hand on such a platform, the legend shows ``N/A`` instead of
+a fake value. When a sample cannot be read or is not usable (missing or malformed ``/proc`` data,
+``MemAvailable`` larger than ``MemTotal``, counter reset, no elapsed tick between two refreshes),
+the legend displays ``N/A`` and the curve leaves a hole: unavailable data is never displayed as an
+idle 0% load and never plotted as a zero.
+
+The metrics are sampled once per interface refresh, like the GPU metrics: no extra polling and no
+busy loop are introduced, and ``-s``/``--sort-by`` style command line paths are unaffected.
+
+### Metric semantics
+
+- **CPU**: the difference between two successive samples of the aggregate tick counters.
+  ``idle + iowait`` is counted as idle time, everything else as busy time. ``guest`` and
+  ``guest_nice`` are *not* added to the total since the kernel already accounts them inside ``user``
+  and ``nice``; adding them would double count virtualization time. The first sample only builds a
+  reference, so a rate is displayed from the second refresh on.
+- **Memory**: ``used = MemTotal - MemAvailable``, the definition used by ``free`` and by the kernel
+  itself, so the reclaimable page cache and the reclaimable slab are *not* counted as used memory.
+  It is deliberately not a sum of the per-process memory: shared libraries, page tables and kernel
+  allocations would be missed or counted several times. The legend shows used and total in GiB
+  (powers of 1024) and the usage as a percentage of ``MemTotal``, and falls back to a shorter
+  ``RAM 20.3%`` legend when the detailed one does not fit the chart.
+
+### Configuration keys
+
+The preferences saved with ``F12`` (``$XDG_CONFIG_HOME/nvtop/interface.ini``) store the two options
+in the ``[GeneralOption]`` section:
+
+```ini
+[GeneralOption]
+ShowHostCpuUsage = true
+ShowHostMemUsage = true
+```
+
+Configuration files written by older versions of ``nvtop`` do not contain these keys; they keep
+working and fall back to the platform defaults above.
 
 GPU Support
 -----------

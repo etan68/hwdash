@@ -235,7 +235,11 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
                                process_field_displayed process_displayed, struct window_position *device_positions,
                                unsigned *num_plots, struct window_position plot_positions[MAX_CHARTS],
                                unsigned *map_device_to_plot, struct window_position *process_position,
-                               struct window_position *setup_position, bool process_win_hide) {
+                               struct window_position *setup_position, bool process_win_hide,
+                               const struct host_chart_input *host_chart, struct window_position *host_chart_position) {
+
+  if (host_chart_position)
+    *host_chart_position = (struct window_position){0, 0, 0, 0};
 
   unsigned min_rows_for_header = 0, header_stacks = 0, num_device_per_row = 0;
   num_device_per_row = max(1, cols / device_header_cols);
@@ -300,6 +304,23 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
   balance_info_on_stacks_preserving_plot_order(cols, num_plot_stacks, *num_plots, num_info_per_plot,
                                                cols_allocated_in_stacks, plot_in_stack);
 
+  // The host chart is a full chart row of its own, inserted right above the GPU
+  // chart rows. It never shares a row with a GPU chart and never merges with
+  // one: the GPU chart count, order, grouping and columns are left untouched.
+  // Every chart row, the host one included, takes an equal share of the
+  // vertical chart space. The host chart is dropped when the chart area cannot
+  // give one more row of the minimum chart height to it, or when a row of the
+  // chart area is too narrow to hold it.
+  bool allocate_host_chart = false;
+  unsigned host_chart_lines = host_chart ? host_chart->num_lines : 0;
+  if (host_chart && host_chart->show && host_chart_lines > 0 && host_chart_lines <= MAX_LINES_PER_PLOT &&
+      host_chart_position && cols >= min_plot_cols(host_chart_lines) &&
+      rows_for_plots >= (num_plot_stacks + 1) * min_plot_rows) {
+    allocate_host_chart = true;
+  }
+
+  unsigned num_chart_rows = num_plot_stacks + (allocate_host_chart ? 1u : 0u);
+
   // Device Information Header
   unsigned cols_header_left = cols - num_device_per_row * device_header_cols;
   bool space_between_header_col = false;
@@ -330,15 +351,24 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
   }
 
   unsigned rows_left_for_process = 0;
-  if (*num_plots > 0) {
-    unsigned rows_per_stack = rows_for_plots / num_plot_stacks;
+  if (num_chart_rows > 0) {
+    unsigned rows_per_stack = rows_for_plots / num_chart_rows;
     if (!process_win_hide && rows_per_stack > 23)
       rows_per_stack = 23;
     unsigned num_plot_done = 0;
     unsigned currentPosX = 0, currentPosY = rows_for_header;
-    for (unsigned stack_id = 0; stack_id < num_plot_stacks; ++stack_id) {
-      unsigned plot_in_this_stack = 0;
-      unsigned lines_to_draw = 0;
+    // Nothing of the GPU charts matches that stack id.
+    const unsigned no_plot_stack = UINT_MAX;
+    // The row of the host chart shifts every GPU chart row down by one.
+    const unsigned stack_row_offset = allocate_host_chart ? 1u : 0u;
+    for (unsigned row_id = 0; row_id < num_chart_rows; ++row_id) {
+      // The host chart owns the first chart row, right below the device
+      // headers, and takes the whole width of that row. The GPU chart rows
+      // follow it, one row per stack, unchanged.
+      bool host_in_this_row = allocate_host_chart && (row_id == 0);
+      unsigned stack_id = host_in_this_row ? no_plot_stack : (row_id - stack_row_offset);
+      unsigned plot_in_this_stack = host_in_this_row ? 1u : 0u;
+      unsigned lines_to_draw = host_in_this_row ? host_chart_lines : 0u;
       for (unsigned j = 0; j < *num_plots; ++j) {
         if (plot_in_stack[j] == stack_id) {
           plot_in_this_stack++;
@@ -346,6 +376,13 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
         }
       }
       unsigned cols_for_line_drawing = cols - plot_in_this_stack * cols_needed_box_drawing;
+      if (host_in_this_row) {
+        // The whole row belongs to the host chart. Like every other chart, it
+        // shares its drawing columns out evenly between its lines.
+        unsigned host_max_cols = cols_needed_box_drawing + cols_for_line_drawing * host_chart_lines / lines_to_draw;
+        unsigned host_cols = host_max_cols - (host_max_cols - cols_needed_box_drawing) % host_chart_lines;
+        *host_chart_position = (struct window_position){currentPosX, currentPosY, host_cols, rows_per_stack};
+      }
       for (unsigned j = 0; j < *num_plots; ++j) {
         if (plot_in_stack[j] == stack_id) {
           unsigned max_plot_cols =
@@ -363,7 +400,7 @@ void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_ro
       currentPosX = 0;
     }
     if (process_field_displayed_count(process_displayed) > 0)
-      rows_left_for_process = rows_for_plots - rows_per_stack * num_plot_stacks;
+      rows_left_for_process = rows_for_plots - rows_per_stack * num_chart_rows;
   } else {
     // No plot displayed, allocate the leftover space to the processes
     if (process_field_displayed_count(process_displayed) > 0 && rows_for_plots > 0)

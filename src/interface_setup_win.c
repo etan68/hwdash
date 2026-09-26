@@ -46,11 +46,17 @@ enum setup_general_options {
   setup_general_color,
   setup_general_show_startup_support_messages,
   setup_general_update_interval,
+  setup_general_host_cpu_usage,
+  setup_general_host_mem_usage,
   setup_general_options_count
 };
 
 static const char *setup_general_option_description[setup_general_options_count] = {
-    "Disable color (requires save and restart)", "Show support messages on startup", "Update interval (seconds)"};
+    "Disable color (requires save and restart)",
+    "Show support messages on startup",
+    "Update interval (seconds)",
+    "Display the whole host CPU usage chart (Linux only)",
+    "Display the whole host memory usage chart (Linux only)"};
 
 // Header Options
 
@@ -257,6 +263,21 @@ static void draw_setup_window_general(struct nvtop_interface *interface) {
       interface->setup_win.options_selected[0] == setup_general_show_startup_support_messages) {
     mvwchgat(interface->setup_win.single, setup_general_show_startup_support_messages + 1, 0, 3, A_STANDOUT, cyan_color,
              NULL);
+  }
+
+  option_state = interface->options.show_host_cpu_usage;
+  mvwprintw(interface->setup_win.single, setup_general_host_cpu_usage + 1, 0, "[%c] %s",
+            option_state_char(option_state), setup_general_option_description[setup_general_host_cpu_usage]);
+  if (interface->setup_win.indentation_level == 1 &&
+      interface->setup_win.options_selected[0] == setup_general_host_cpu_usage) {
+    mvwchgat(interface->setup_win.single, setup_general_host_cpu_usage + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
+  }
+  option_state = interface->options.show_host_mem_usage;
+  mvwprintw(interface->setup_win.single, setup_general_host_mem_usage + 1, 0, "[%c] %s",
+            option_state_char(option_state), setup_general_option_description[setup_general_host_mem_usage]);
+  if (interface->setup_win.indentation_level == 1 &&
+      interface->setup_win.options_selected[0] == setup_general_host_mem_usage) {
+    mvwchgat(interface->setup_win.single, setup_general_host_mem_usage + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
   }
 
   int update_deciseconds = (interface->options.update_interval / 100) % 10;
@@ -814,6 +835,12 @@ void handle_setup_win_keypress(int keyId, struct nvtop_interface *interface) {
           interface->options.show_startup_messages = !interface->options.show_startup_messages;
         }
         if (interface->setup_win.options_selected[0] == setup_general_update_interval) {
+        }
+        if (interface->setup_win.options_selected[0] == setup_general_host_cpu_usage) {
+          interface->options.show_host_cpu_usage = !interface->options.show_host_cpu_usage;
+        }
+        if (interface->setup_win.options_selected[0] == setup_general_host_mem_usage) {
+          interface->options.show_host_mem_usage = !interface->options.show_host_mem_usage;
         }
       }
       // Header Options

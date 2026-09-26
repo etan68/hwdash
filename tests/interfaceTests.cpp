@@ -145,7 +145,7 @@ bool test_with_terminal_size(unsigned device_count, unsigned header_rows, unsign
   std::vector<unsigned> map_dev_to_plot(device_count);
   compute_sizes_from_layout(device_count, header_rows, header_cols, rows, cols, plot_display.data(), proc_display,
                             dev_positions.data(), &num_plots, plot_positions.data(), map_dev_to_plot.data(),
-                            &process_position, &setup_position, false);
+                            &process_position, &setup_position, false, nullptr, nullptr);
   plot_positions.resize(num_plots);
 
   return check_layout(screen, dev_positions, plot_positions, process_position, setup_position);
@@ -172,7 +172,7 @@ TEST(InterfaceLayout, CheckEmptyProcessWindow) {
   std::vector<unsigned> map_dev_to_plot(device_count);
   compute_sizes_from_layout(device_count, header_rows, header_cols, rows, cols, plot_display.data(), proc_display,
                             dev_positions.data(), &num_plots, plot_positions.data(), map_dev_to_plot.data(),
-                            &process_position, &setup_position, false);
+                            &process_position, &setup_position, false, nullptr, nullptr);
   plot_positions.resize(num_plots);
   EXPECT_EQ(num_plots, 0);
   EXPECT_TRUE(window_is_empty(process_position));
@@ -195,7 +195,7 @@ TEST(InterfaceLayout, FixInfiniteLoop) {
   std::vector<unsigned> map_dev_to_plot(device_count);
   compute_sizes_from_layout(device_count, header_rows, header_cols, rows, cols, plot_display.data(), proc_display,
                             dev_positions.data(), &num_plots, plot_positions.data(), map_dev_to_plot.data(),
-                            &process_position, &setup_position, false);
+                            &process_position, &setup_position, false, nullptr, nullptr);
   plot_positions.resize(num_plots);
 }
 

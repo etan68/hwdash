@@ -22,6 +22,7 @@
 #include "nvtop/interface_options.h"
 #include "ini.h"
 #include "nvtop/extract_processinfo_fdinfo.h"
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface_common.h"
 
 #include <assert.h>
@@ -130,6 +131,7 @@ void alloc_interface_options_internals(char *config_location, unsigned num_devic
   options->filter_nvtop_pid = true;
   options->hide_processes_list = false;
   options->has_gpu_info_bar = false;
+  interface_options_set_host_usage_defaults(options);
   options->gpu_plot_color_idx[0] = 1;  // Cyan
   options->gpu_plot_color_idx[1] = 3;  // Yellow
   options->gpu_plot_color_idx[2] = 2;  // Green
@@ -154,6 +156,16 @@ void alloc_interface_options_internals(char *config_location, unsigned num_devic
   }
 }
 
+void interface_options_set_host_usage_defaults(nvtop_interface_option *options) {
+  if (!options)
+    return;
+  // Both lines of the host chart are enabled where the whole host metrics can
+  // be collected (on Linux, from /proc). Other platforms keep the chart hidden
+  // by default instead of displaying unavailable metrics.
+  options->show_host_cpu_usage = host_metrics_platform_supported();
+  options->show_host_mem_usage = host_metrics_platform_supported();
+}
+
 struct nvtop_option_ini_data {
   unsigned num_devices;
   unsigned selectedGpu;
@@ -171,6 +183,8 @@ static const char general_section[] = "GeneralOption";
 static const char general_value_use_color[] = "UseColor";
 static const char general_value_update_interval[] = "UpdateInterval";
 static const char general_show_messages[] = "ShowInfoMessages";
+static const char general_show_host_cpu_usage[] = "ShowHostCpuUsage";
+static const char general_show_host_mem_usage[] = "ShowHostMemUsage";
 
 static const char header_section[] = "HeaderOption";
 static const char header_value_use_fahrenheit[] = "UseFahrenheit";
@@ -229,6 +243,22 @@ static int nvtop_option_ini_handler(void *user, const char *section, const char 
       }
       if (strcmp(value, "false") == 0) {
         ini_data->options->show_startup_messages = false;
+      }
+    }
+    if (strcmp(name, general_show_host_cpu_usage) == 0) {
+      if (strcmp(value, "true") == 0) {
+        ini_data->options->show_host_cpu_usage = true;
+      }
+      if (strcmp(value, "false") == 0) {
+        ini_data->options->show_host_cpu_usage = false;
+      }
+    }
+    if (strcmp(name, general_show_host_mem_usage) == 0) {
+      if (strcmp(value, "true") == 0) {
+        ini_data->options->show_host_mem_usage = true;
+      }
+      if (strcmp(value, "false") == 0) {
+        ini_data->options->show_host_mem_usage = false;
       }
     }
   }
@@ -414,6 +444,8 @@ bool save_interface_options_to_config_file(unsigned total_dev_count, const nvtop
   fprintf(config_file, "%s = %s\n", general_value_use_color, boolean_string(options->use_color));
   fprintf(config_file, "%s = %d\n", general_value_update_interval, options->update_interval);
   fprintf(config_file, "%s = %s\n", general_show_messages, boolean_string(options->show_startup_messages));
+  fprintf(config_file, "%s = %s\n", general_show_host_cpu_usage, boolean_string(options->show_host_cpu_usage));
+  fprintf(config_file, "%s = %s\n", general_show_host_mem_usage, boolean_string(options->show_host_mem_usage));
 
   // Header Options
   fprintf(config_file, "\n[%s]\n", header_section);

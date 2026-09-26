@@ -47,7 +47,7 @@ Print the version and exit.
 You can enter the setup utility by pressing \fBF2\fR to view and modify the following interface options:
 .TP
 .I General
-This section deals with general interface options. \fBColor support\fR and \fBinterface update interval\fR can be modified.
+This section deals with general interface options. \fBColor support\fR, \fBinterface update interval\fR and the \fBhost CPU usage\fR / \fBhost memory usage\fR lines of the combined host chart can be modified.
 .TP
 .I Devices
 This section deals with the devices display (top of the interface). You can \fBswitch the temperature scale to fahrenheit\fR and \fBset the encoder/decoder hiding timer\fR.
@@ -57,6 +57,29 @@ This section deals with the line plots (middle of the interface). You can \fBrev
 .TP
 .I Processes
 This section deals with the process list (bottom of the interface). You can \fBselect the sort order\fR, \fBselect the metric by which to sort the processes by\fR and \fBselect which metric is displayed\fR.
+
+.SH HOST CPU AND MEMORY MONITORING
+.TP
+On \fBLinux\fR only, \fBnvtop\fR can display the whole host usage in a single \fBhost chart\fR, the
+way the GPU utilization and the GPU memory share a GPU chart. The chart holds one percentage history
+line per enabled metric: the whole host \fBCPU\fR utilization and the whole host \fBmemory\fR
+utilization. The charts are stacked vertically, one full chart immediately below the previous one:
+the host chart owns the first chart row, full width, directly below the device headers, the GPU
+charts follow it in their usual order and grouping, and the process list stays below the charts. The
+host chart never shares a row with a GPU chart and never takes a column away from one. It is an
+ordinary chart: same size rules, same \fB0/25/50/75/100\fR scale, same border, same time axis and
+same resize behaviour, and it is dropped like any chart that does not fit a small terminal.
+.TP
+The CPU utilization is the difference between two successive samples of the aggregate
+\fI/proc/stat\fR counters (\fBidle\fR and \fBiowait\fR count as idle time, \fBguest\fR and
+\fBguest_nice\fR are excluded to avoid double counting). Memory usage is \fBMemTotal - MemAvailable\fR
+read from \fI/proc/meminfo\fR; the legend shows used/total GiB and the percentage, or a shorter
+legend when the chart is narrow. Data that cannot be read, including \fBMemAvailable\fR larger than
+\fBMemTotal\fR, displays \fBN/A\fR and leaves a hole in the curve: it is never plotted as a zero.
+Both lines are disabled by default on the other platforms.
+.TP
+The two options are saved with \fBF12\fR in the \fB[GeneralOption]\fR section of \fIinterface.ini\fR
+as \fBShowHostCpuUsage\fR and \fBShowHostMemUsage\fR.
 
 .SH INTERACTIVE COMMANDS
 .TP

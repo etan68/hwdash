@@ -52,6 +52,8 @@ typedef struct nvtop_interface_option_struct {
   bool has_monitored_set_changed;                   // True if the set of monitored gpu was modified through the interface
   bool has_gpu_info_bar;                            // Show info bar with additional GPU parameters
   bool hide_processes_list;                         // Hide processes list
+  bool show_host_cpu_usage;                         // Draw the whole host CPU utilization in the host chart
+  bool show_host_mem_usage;                         // Draw the whole host memory utilization in the host chart
   unsigned char gpu_plot_color_idx[MAX_LINES_PER_PLOT]; // index into plot_color_names[] per plot slot
 } nvtop_interface_option;
 
@@ -91,6 +93,11 @@ static inline plot_info_to_draw plot_npu_default_draw_info(void) {
 
 void alloc_interface_options_internals(char *config_file_location, unsigned num_devices, struct list_head *devices,
                                        nvtop_interface_option *options);
+
+// Set the default visibility of the combined host chart: both of its lines are
+// enabled where the whole host metrics can be collected, and disabled
+// elsewhere instead of displaying unavailable metrics.
+void interface_options_set_host_usage_defaults(nvtop_interface_option *options);
 
 unsigned interface_check_and_fix_monitored_gpus(unsigned num_devices, struct list_head *monitoredGpus,
                                                 struct list_head *nonMonitoredGpus, nvtop_interface_option *options);

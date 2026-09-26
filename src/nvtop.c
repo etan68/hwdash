@@ -20,6 +20,7 @@
  */
 
 #include "nvtop/extract_gpuinfo.h"
+#include "nvtop/host_metrics.h"
 #include "nvtop/info_messages.h"
 #include "nvtop/interface.h"
 #include "nvtop/interface_common.h"
@@ -346,6 +347,11 @@ int main(int argc, char **argv) {
       initialize_curses(allDevCount, numMonitoredGpus, interface_largest_gpu_name(&monitoredGpus), allDevicesOptions);
   timeout(interface_update_interval(interface));
 
+  // Allocate the whole host metrics state and take the first CPU sample: the
+  // utilization is only meaningful as a difference between two samples, the
+  // first refresh after the startup already reports a rate.
+  host_metrics_get_state();
+
   double time_slept = interface_update_interval(interface);
   while (!signal_exit) {
     if (signal_resize_win) {
@@ -370,6 +376,8 @@ int main(int argc, char **argv) {
         gpuinfo_fix_dynamic_info_from_process_info(&monitoredGpus);
       }
       save_current_data_to_ring(&monitoredGpus, interface);
+      // Sample the whole host metrics once per refresh, never on keystrokes.
+      host_metrics_refresh();
       timeout(interface_update_interval(interface));
       time_slept = 0.;
     } else {
@@ -445,6 +453,7 @@ int main(int argc, char **argv) {
   }
 
   clean_ncurses(interface);
+  host_metrics_shutdown();
   gpuinfo_shutdown_info_extraction(&monitoredGpus);
 
   return EXIT_SUCCESS;

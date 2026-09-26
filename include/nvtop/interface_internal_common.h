@@ -106,6 +106,7 @@ struct process_window {
 struct plot_window {
   size_t num_data;
   double *data;
+  unsigned num_data_lines; // Number of lines drawn in this chart, interleaved in data
   WINDOW *win;
   WINDOW *plot_window;
   unsigned num_devices_to_plot;
@@ -144,6 +145,11 @@ struct nvtop_interface {
   struct plot_window *plots;
   interface_ring_buffer saved_data_ring;
   struct setup_window setup_win;
+  // Combined whole host chart (CPU and memory utilization). It is a chart like
+  // the GPU ones, drawn with the same renderer and laid out by the same
+  // algorithm; num_data_lines is zero when no host metric is enabled.
+  struct plot_window host_plot;
+  bool has_host_plot;
 };
 
 enum device_field {

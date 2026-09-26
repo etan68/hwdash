@@ -21,6 +21,7 @@
 
 #include "nvtop/common.h"
 #include "nvtop/extract_gpuinfo_common.h"
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface.h"
 #include "nvtop/interface_common.h"
 #include "nvtop/interface_internal_common.h"
@@ -360,7 +361,7 @@ static void alloc_process_with_option(struct nvtop_interface *interface, unsigne
   interface->process.option_window.input_number = 0;
 }
 
-static void initialize_gpu_mem_plot(struct plot_window *plot, struct window_position *position,
+static void initialize_gpu_mem_plot(struct plot_window *plot, const struct window_position *position,
                                     nvtop_interface_option *options) {
   unsigned rows = position->sizeY;
   unsigned cols = position->sizeX;
@@ -376,12 +377,9 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, struct window_posi
   plot->data = calloc(cols, sizeof(*plot->data));
   plot->num_data = cols;
 
-  unsigned column_divisor = 0;
-  for (unsigned i = 0; i < plot->num_devices_to_plot; ++i) {
-    unsigned dev_id = plot->devices_ids[i];
-    plot_info_to_draw to_draw = options->gpu_specific_opts[dev_id].to_draw;
-    column_divisor += plot_count_draw_info(to_draw);
-  }
+  // A column of the chart holds one sample of each of its lines, whatever the
+  // number of lines displayed in the chart.
+  unsigned column_divisor = plot->num_data_lines;
   assert(column_divisor > 0);
   char elapsedSeconds[16];
   char *err = "err";
@@ -476,10 +474,139 @@ static void alloc_plot_window(unsigned devices_count, struct window_position *pl
         interface->plots[i].num_devices_to_plot++;
       }
     }
+    interface->plots[i].num_data_lines = 0;
+    for (unsigned j = 0; j < interface->plots[i].num_devices_to_plot; ++j) {
+      unsigned dev_id = interface->plots[i].devices_ids[j];
+      interface->plots[i].num_data_lines += plot_count_draw_info(interface->options.gpu_specific_opts[dev_id].to_draw);
+    }
     interface->plots[i].win =
         newwin(plot_positions[i].sizeY, plot_positions[i].sizeX, plot_positions[i].posY, plot_positions[i].posX);
     initialize_gpu_mem_plot(&interface->plots[i], &plot_positions[i], &interface->options);
   }
+}
+
+// Whole host CPU and memory chart ////////////////////////////////////////////
+// The whole host CPU utilization and the whole host memory utilization share a
+// single chart, the way the GPU utilization and the GPU memory share a GPU
+// chart. compute_sizes_from_layout() gives it the same geometry rules as an
+// ordinary chart and lets it own the first chart row, right below the device
+// headers and above all the GPU chart rows, so the charts stack up vertically:
+// the host chart, then the GPU charts in their usual order, then the process
+// list. It is drawn with the same renderer as the GPU charts, so it shares
+// their border, their 0/25/50/75/100 scale, their time axis and the direction
+// of time.
+
+static bool host_metric_enabled(const struct nvtop_interface *interface, enum host_metric metric) {
+  switch (metric) {
+  case host_metric_cpu:
+    return interface->options.show_host_cpu_usage;
+  case host_metric_memory:
+    return interface->options.show_host_mem_usage;
+  case host_metric_count:
+    break;
+  }
+  return false;
+}
+
+// Number of lines of the combined host chart: one percentage line per enabled
+// metric, none when both metrics are disabled.
+static unsigned host_chart_line_count(const struct nvtop_interface *interface) {
+  unsigned count = 0;
+  for (unsigned i = 0; i < host_metric_count; ++i) {
+    if (host_metric_enabled(interface, (enum host_metric)i))
+      ++count;
+  }
+  return count;
+}
+
+static void free_host_plot(struct nvtop_interface *interface) {
+  if (interface->host_plot.plot_window)
+    delwin(interface->host_plot.plot_window);
+  if (interface->host_plot.win)
+    delwin(interface->host_plot.win);
+  free(interface->host_plot.data);
+  memset(&interface->host_plot, 0, sizeof(interface->host_plot));
+  interface->has_host_plot = false;
+}
+
+static void alloc_host_plot(struct nvtop_interface *interface, const struct window_position *position,
+                            unsigned num_data_lines) {
+  memset(&interface->host_plot, 0, sizeof(interface->host_plot));
+  interface->has_host_plot = false;
+  if (!position || position->sizeX < 6 || position->sizeY < 3 || num_data_lines == 0)
+    return;
+  interface->host_plot.num_data_lines = num_data_lines;
+  interface->host_plot.win = newwin(position->sizeY, position->sizeX, position->posY, position->posX);
+  if (!interface->host_plot.win)
+    return;
+  // Same frame, same scale and same time axis as the GPU charts.
+  initialize_gpu_mem_plot(&interface->host_plot, position, &interface->options);
+  interface->has_host_plot = interface->host_plot.plot_window && interface->host_plot.data;
+}
+
+// Fill the chart data with the host histories. The samples are interleaved
+// exactly like the GPU ones: data[column * num_lines + line], with a sample
+// missing where the metric was not available.
+static unsigned populate_host_plot_data(const struct nvtop_interface *interface, const struct plot_window *plot_win,
+                                        char plot_legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE]) {
+  const struct host_metrics_state *state = host_metrics_get_state();
+  unsigned num_lines = plot_win->num_data_lines;
+  if (!plot_win->data || !num_lines || (plot_win->num_data % num_lines))
+    return 0;
+  unsigned cols_per_line = plot_win->num_data / num_lines;
+  if (!cols_per_line)
+    return 0;
+
+  // Not a number is a hole in the history: the renderer leaves the place empty
+  // instead of drawing the unavailable metric as an idle zero percent.
+  for (size_t i = 0; i < plot_win->num_data; ++i)
+    plot_win->data[i] = NAN;
+
+  int plot_cols = getmaxx(plot_win->plot_window);
+
+  unsigned in_processing = 0;
+  for (unsigned i = 0; i < host_metric_count && in_processing < num_lines; ++i) {
+    enum host_metric metric = (enum host_metric)i;
+    if (!host_metric_enabled(interface, metric))
+      continue;
+
+    // Legend of the line, shortened when the detailed one does not fit.
+    unsigned needed =
+        host_metrics_format_legend(state, metric, false, plot_legend[in_processing], PLOT_MAX_LEGEND_SIZE);
+    if ((int)needed > plot_cols - 1)
+      host_metrics_format_legend(state, metric, true, plot_legend[in_processing], PLOT_MAX_LEGEND_SIZE);
+
+    // The histories are stored once per interface refresh, like the GPU data
+    // in the interface ring buffer.
+    unsigned stored = state ? state->history_count[metric] : 0;
+    for (unsigned j = 0; j < stored && j < cols_per_line; ++j) {
+      double value;
+      if (!host_metrics_history_get(state, metric, j, &value))
+        continue;
+      // j counts backwards in time: the newest sample is on the right, or on
+      // the left when the plots are reversed.
+      unsigned column = interface->options.plot_left_to_right ? j : (cols_per_line - j - 1);
+      plot_win->data[column * num_lines + in_processing] = value;
+    }
+    in_processing++;
+  }
+  return in_processing;
+}
+
+static void draw_host_plot(struct nvtop_interface *interface) {
+  if (!interface->has_host_plot)
+    return;
+  struct plot_window *plot = &interface->host_plot;
+  werase(plot->plot_window);
+
+  char plot_legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE];
+  unsigned num_lines = populate_host_plot_data(interface, plot, plot_legend);
+  if (num_lines != plot->num_data_lines)
+    return;
+
+  nvtop_line_plot(plot->plot_window, plot->num_data, plot->data, num_lines, !interface->options.plot_left_to_right,
+                  plot_legend);
+  wnoutrefresh(plot->plot_window);
 }
 
 static unsigned device_length(void) {
@@ -517,17 +644,25 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
   struct window_position process_position;
   struct window_position plot_positions[MAX_CHARTS];
   struct window_position setup_position;
+  struct window_position host_plot_position;
 
   // NVLink layout adjustments must happen before panel dimensions are computed.
   // any_device_has_nvlink_active is set by the probe that runs before this function.
   nvtop_adjust_field_sizes_for_nvlink();
 
+  // The whole host chart is an extra chart of the chart area, laid out with the
+  // same rules as the GPU charts. It owns the first chart row, full width, and
+  // takes one equal share of the chart space before the existing GPU rows.
+  unsigned host_plot_lines = host_chart_line_count(dwin);
+  struct host_chart_input host_chart = {.show = host_plot_lines > 0, .num_lines = host_plot_lines};
+
   compute_sizes_from_layout(devices_count, dwin->options.has_gpu_info_bar ? 4 : 3, device_length(), rows - 1, cols,
                             dwin->options.gpu_specific_opts, dwin->options.process_fields_displayed, device_positions,
                             &dwin->num_plots, plot_positions, map_device_to_plot, &process_position, &setup_position,
-                            dwin->options.hide_processes_list);
+                            dwin->options.hide_processes_list, &host_chart, &host_plot_position);
 
   alloc_plot_window(devices_count, plot_positions, map_device_to_plot, dwin);
+  alloc_host_plot(dwin, &host_plot_position, host_plot_lines);
 
   for (unsigned int i = 0; i < devices_count; ++i) {
     alloc_device_window(device_positions[i].posY, device_positions[i].posX, device_positions[i].sizeX,
@@ -558,6 +693,7 @@ static void delete_all_windows(struct nvtop_interface *dwin) {
     delwin(dwin->plots[i].plot_window);
     free(dwin->plots[i].data);
   }
+  free_host_plot(dwin);
   free_setup_window(&dwin->setup_win);
   free(dwin->plots);
 }
@@ -2170,6 +2306,7 @@ void draw_gpu_info_ncurses(unsigned devices_count, struct list_head *devices, st
   if (!interface->setup_win.visible) {
     draw_plots(devices, interface);
     draw_processes(devices, interface);
+    draw_host_plot(interface);
   } else {
     draw_setup_window(devices_count, devices, interface);
   }

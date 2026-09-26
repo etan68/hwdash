@@ -32,9 +32,13 @@ static inline int data_level(double rows, double data, double increment) {
   return (int)(rows - round(data / increment));
 }
 
+// A sample that is not a number is a hole in the history: the metric was not
+// available for that sample and it must not be drawn as an idle zero.
+static inline bool is_missing_sample(double data) { return isnan(data); }
+
 void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned num_lines, bool legend_left,
                      char legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE]) {
-  if (num_data == 0)
+  if (num_data == 0 || num_lines == 0)
     return;
   int rows, cols;
   getmaxyx(win, rows, cols);
@@ -44,11 +48,27 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
   assert(num_lines <= MAX_LINES_PER_PLOT && "Cannot plot more than " EXPAND_AND_QUOTE(MAX_LINES_PER_PLOT) " lines");
   static const short plot_line_colors[MAX_LINES_PER_PLOT] = {7, 8, 9, 10};
   unsigned lvl_before[MAX_LINES_PER_PLOT];
+  bool has_lvl_before[MAX_LINES_PER_PLOT];
   for (size_t k = 0; k < num_lines; ++k)
-    lvl_before[k] = data_level(rows, data[k], increment);
+    has_lvl_before[k] = !is_missing_sample(data[k]);
 
   for (size_t i = 0; i < num_data || i < (size_t)cols; i += num_lines) {
     for (unsigned k = 0; k < num_lines; ++k) {
+      if (is_missing_sample(data[i + k])) {
+        // No value for this line here: leave the place empty and break the
+        // line, the next defined sample starts a new segment.
+        has_lvl_before[k] = false;
+        continue;
+      }
+      if (!has_lvl_before[k]) {
+        // First defined sample of a line, or sample coming back from a hole:
+        // there is nothing to connect the sample to, draw it as a point.
+        lvl_before[k] = data_level(rows, data[i + k], increment);
+        has_lvl_before[k] = true;
+        wcolor_set(win, plot_line_colors[k], NULL);
+        mvwhline(win, lvl_before[k], i + k, 0, 1);
+        continue;
+      }
       unsigned lvl_now_k = data_level(rows, data[i + k], increment);
       wcolor_set(win, plot_line_colors[k], NULL);
       // Three cases: has increased, has decreased and remained level
@@ -70,7 +90,7 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
 
         // Draw the continuation of the other metrics
         for (unsigned j = 0; j < num_lines; ++j) {
-          if (j != k) {
+          if (j != k && has_lvl_before[j]) {
             if (lvl_before[j] == top)
               // The continuation is at the same level as the bottom corner
               mvwaddch(win, top, i + k, ACS_BTEE);
@@ -93,7 +113,7 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
         // Case 3: stayed level
         mvwhline(win, lvl_now_k, i + k, 0, 1);
         for (unsigned j = 0; j < num_lines; ++j) {
-          if (j != k) {
+          if (j != k && has_lvl_before[j]) {
             if (lvl_before[j] != lvl_now_k) {
               // Add the continuation of other metric lines
               wcolor_set(win, plot_line_colors[j], NULL);
