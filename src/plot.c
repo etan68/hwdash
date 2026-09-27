@@ -34,6 +34,10 @@
 // available for that sample and it must not be drawn as an idle zero.
 static inline bool is_missing_sample(double data) { return isnan(data); }
 
+// The color of the plot line of a chart, shared by the curve, its legend and
+// the readout of its current value.
+static const short plot_line_colors[MAX_LINES_PER_PLOT] = {7, 8, 9, 10};
+
 void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned num_lines, bool legend_left,
                      char legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE]) {
   if (num_data == 0 || num_lines == 0)
@@ -44,7 +48,7 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
     return;
 
   assert(num_lines <= MAX_LINES_PER_PLOT && "Cannot plot more than " EXPAND_AND_QUOTE(MAX_LINES_PER_PLOT) " lines");
-  static const short plot_line_colors[MAX_LINES_PER_PLOT] = {7, 8, 9, 10};
+  const bool reversed_time_axis = !legend_left;
   unsigned lvl_before[MAX_LINES_PER_PLOT];
   bool has_lvl_before[MAX_LINES_PER_PLOT];
   for (size_t k = 0; k < num_lines; ++k)
@@ -59,29 +63,46 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
         has_lvl_before[k] = false;
         continue;
       }
+      const int level = nvtop_plot_data_level((unsigned)rows, data[i + k]);
+      if (level < 0) {
+        has_lvl_before[k] = false;
+        continue;
+      }
+      // Where the line is drawn and how it is joined to what came before, all
+      // of it decided by the column the sample lies in. The oldest edge of the
+      // ordinary axis is the left one: a sample that reaches it has no
+      // connector left on its left and it disappears with it, so no leftover
+      // mark ever hangs at the edge of the chart. The line begins at the first
+      // sample that belongs to a visible segment, and the reversed axis keeps
+      // the newest edge it draws there.
+      switch (nvtop_plot_sample_action_at(reversed_time_axis, sample_column)) {
+      case nvtop_plot_sample_drop:
+        lvl_before[k] = (unsigned)level;
+        has_lvl_before[k] = true;
+        continue;
+      case nvtop_plot_sample_point:
+        // Nothing to connect the sample to: draw it as a point, be it the
+        // first sample of a line, one coming back from a hole, or the first
+        // one the chart can connect from.
+        lvl_before[k] = (unsigned)level;
+        has_lvl_before[k] = true;
+        wcolor_set(win, plot_line_colors[k], NULL);
+        mvwhline(win, lvl_before[k], i + k, 0, 1);
+        continue;
+      case nvtop_plot_sample_connect:
+        break;
+      }
       if (!has_lvl_before[k]) {
-        // First defined sample of a line, or sample coming back from a hole:
-        // there is nothing to connect the sample to, draw it as a point.
-        lvl_before[k] = (unsigned)nvtop_plot_data_level((unsigned)rows, data[i + k]);
+        // The line has a hole right before this sample: nothing to connect it
+        // to, draw it as a point.
+        lvl_before[k] = (unsigned)level;
         has_lvl_before[k] = true;
         wcolor_set(win, plot_line_colors[k], NULL);
         mvwhline(win, lvl_before[k], i + k, 0, 1);
         continue;
       }
-      unsigned lvl_now_k = (unsigned)nvtop_plot_data_level((unsigned)rows, data[i + k]);
+      unsigned lvl_now_k = (unsigned)level;
       wcolor_set(win, plot_line_colors[k], NULL);
-      // With the ordinary right-to-left time axis the oldest sample leaves at
-      // the left, which is also where the legend is anchored. In the reversed
-      // direction the left edge is the newest edge and must keep its normal
-      // connector.
-      if (legend_left && !nvtop_plot_connect_from_previous(sample_column)) {
-        // Do not preserve the last vertical transition when it reaches the
-        // left edge. The current value starts a clean segment and the old
-        // value leaves the chart without a boundary artifact.
-        lvl_before[k] = lvl_now_k;
-        mvwhline(win, lvl_now_k, i + k, 0, 1);
-        continue;
-      }
       // Three cases: has increased, has decreased and remained level
       if (lvl_before[k] < lvl_now_k || lvl_before[k] > lvl_now_k) {
         // Case 1 and 2: has increased/decreased
@@ -169,6 +190,40 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
     }
     wstandend(win);
   }
+}
+
+void nvtop_plot_readouts(WINDOW *win, size_t num_data, const double *data, unsigned num_lines, bool legend_left) {
+  if (!win || num_lines == 0 || num_data < num_lines)
+    return;
+  int rows, cols;
+  getmaxyx(win, rows, cols);
+  if (cols <= (int)(PLOT_READOUT_LEFT_PAD + PLOT_READOUT_VALUE_WIDTH))
+    return;
+
+  // The value of a line is the sample its visible end lies on: the newest one
+  // of the history, at the edge the time flows out of, skipping the holes the
+  // line is broken at. A line with no drawn value shows nothing at all.
+  const size_t num_columns = num_data / num_lines;
+  const bool reversed_time_axis = !legend_left;
+  double values[MAX_LINES_PER_PLOT];
+  for (unsigned k = 0; k < num_lines; ++k) {
+    double value = NAN;
+    if (nvtop_plot_newest_drawn_value(num_columns, reversed_time_axis, data, num_lines, k, &value))
+      values[k] = value;
+    else
+      values[k] = NAN;
+  }
+
+  struct plot_readout readouts[MAX_LINES_PER_PLOT];
+  const unsigned num_readouts = nvtop_place_plot_readouts((unsigned)rows, values, num_lines, readouts, num_lines);
+  char text[PLOT_READOUT_VALUE_SIZE];
+  for (unsigned i = 0; i < num_readouts; ++i) {
+    if (!nvtop_format_plot_readout(text, sizeof(text), readouts[i].value))
+      continue;
+    wcolor_set(win, plot_line_colors[readouts[i].line], NULL);
+    mvwaddnstr(win, readouts[i].row, (int)PLOT_READOUT_LEFT_PAD, text, (int)PLOT_READOUT_VALUE_WIDTH);
+  }
+  wstandend(win);
 }
 
 void draw_rectangle(WINDOW *win, unsigned startX, unsigned startY, unsigned sizeX, unsigned sizeY) {

@@ -139,6 +139,13 @@ void compute_monitoring_layout(const struct layout_request *request, struct layo
 
 const char *layout_section_kind_name(enum layout_section_kind kind);
 
+// The columns to push the rows of a detail block below its title row, so that
+// their first field starts at the terminal column the vertical Y axis of the
+// chart of the same section is drawn at. Zero when either the detail block or
+// the chart is not displayed: there is nothing to indent, and nothing to align
+// the detail rows on.
+unsigned layout_detail_indent(const struct window_position *detail, const struct window_position *chart);
+
 // Request for the combined whole host chart. The CPU and the memory
 // utilization share a single chart, the way the GPU utilization and the GPU
 // memory share a GPU chart. The host chart is an ordinary chart of its own

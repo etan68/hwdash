@@ -68,7 +68,10 @@ devices. The monitoring screen is a stack of sections, from the top of the termi
 the CPU device (its detail block then its chart), one section per GPU device in its index order
 (each detail block directly above the chart that draws that device only), the process list, the
 unused space and the shortcut line, anchored to the last row. One blank row separates two sections,
-never a device detail block from its own chart. No chart ever shares a row with another one and none
+never a device detail block from its own chart. The first row of a detail block is the title row of
+its device and stays at the column of the section; every row below it starts at the column the vertical
+Y axis of the chart of that same device is drawn at, where a narrow terminal truncates it rather than
+wrapping it into the next section. No chart ever shares a row with another one and none
 takes a column away from another: every visible device owns a full width chart of its own, and all
 of the visible charts share the available vertical space equally. The CPU chart is an ordinary
 chart: same size rules, same \fB0/25/50/75/100\fR scale, same border, same time axis and same
@@ -80,6 +83,20 @@ swatch: the text and the swatch of an entry use the color of the plot line they 
 chart reads \fBGPU0 % ---    GPU0 mem% ---\fR and the CPU chart \fBCPU % ---    RAM % ---\fR. A
 legend never shows the current value of its metric, which the detail block above the chart already
 shows; a row that does not fit a narrow chart is cut, never wrapped.
+.TP
+The current value of every line of a chart is read out in a \fBgutter\fR at its right edge, in the
+color of that line: \fB0.4%\fR, \fB92.6%\fR, \fB100.0%\fR. The frame stops short of the right edge
+of the section by the width of the gutter, which takes its columns off the data area and never off the
+section itself. A value sits on the row its own line ends on; when two values would land on the same
+row, or too close to be read apart, they take separate adjacent rows, the highest value highest on the
+screen and, on a tie, the lower plot line above the higher one. A readout always stays inside the data
+region, below the legend and above the time axis, and a line whose newest sample is not available
+shows no readout rather than a made up zero.
+.TP
+The oldest edge of a chart is kept clean: a curve begins at the first sample that belongs to a
+continuous visible segment, and the oldest sample leaves the chart together with the connector that
+used to follow it, so no leftover mark hangs at the edge. With the time axis reversed the left edge is
+the newest one and keeps the head of every line.
 .TP
 On a small terminal that cannot give the minimum chart height to every device, whole device
 sections are left out, in a fixed order: the \fBCPU device first\fR, then the \fBGPU device sections

@@ -25,6 +25,7 @@
 // and the shortcut bar anchored to the last row.
 
 #include "nvtop/interface_layout_selection.h"
+#include "nvtop/plot_geometry.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -118,9 +119,9 @@ static bool window_inside(struct window_position win, struct window_position con
          win.posY >= container.posY && win.posY + win.sizeY <= container.posY + container.sizeY;
 }
 
-// The narrowest chart that can draw that many lines: the box drawing plus ten
-// columns per line.
-static unsigned min_chart_cols(unsigned lines) { return 5u + 10u * lines; }
+// The narrowest chart that can draw that many lines and read out their current
+// value: the box drawing, the readout gutter, and ten columns per line.
+static unsigned min_chart_cols(unsigned lines) { return PLOT_COLUMNS_NOT_DATA + 10u * lines; }
 
 // The visible devices are an ordered prefix of the requested devices, and the
 // only devices the layout says anything about: every device with a section, a
@@ -450,6 +451,9 @@ static void test_small_terminals_stay_valid(void) {
             windows[num_windows++] = layout.result.host_chart;
             drawn[num_drawn++] = layout.result.host_chart;
             CHECK(layout.result.host_chart.sizeY >= LAYOUT_MIN_CHART_ROWS);
+            // Room for the frame, the labels and the readout gutter of a chart
+            // that is drawn at all.
+            CHECK(layout.result.host_chart.sizeX > PLOT_COLUMNS_NOT_DATA);
           }
           for (unsigned dev = 0; dev < layout.num_devices; ++dev)
             windows[num_windows++] = layout.result.device_positions[dev];
@@ -457,6 +461,7 @@ static void test_small_terminals_stay_valid(void) {
             windows[num_windows++] = layout.result.plot_positions[plot];
             drawn[num_drawn++] = layout.result.plot_positions[plot];
             CHECK(layout.result.plot_positions[plot].sizeY >= LAYOUT_MIN_CHART_ROWS);
+            CHECK(layout.result.plot_positions[plot].sizeX > PLOT_COLUMNS_NOT_DATA);
           }
           if (layout.result.process.sizeY > 0) {
             windows[num_windows++] = layout.result.process;
@@ -485,6 +490,85 @@ static void test_small_terminals_stay_valid(void) {
   }
 }
 
+// The rows of a detail block below its title row line up with the vertical Y
+// axis of the chart of the same device, whatever the terminal, and the title
+// row itself stays where the section puts it.
+static void test_detail_rows_line_up_with_the_chart_axis(void) {
+  struct SectionLayout layout;
+  compute(&layout, 2u, 3u, 55u, 62u, 162u, 2u, false);
+
+  // The CPU device: its title row at the section column, the CPU and the RAM
+  // rows below it at the column the chart draws its axis at.
+  CHECK(layout.result.host_detail.posX == 0u);
+  unsigned indent = layout_detail_indent(&layout.result.host_detail, &layout.result.host_chart);
+  CHECK(layout.result.host_detail.posX + indent == layout.result.host_chart.posX + PLOT_Y_AXIS_COL);
+  CHECK(indent > 0u);
+  // The indented rows stay inside the block, which is as wide as the terminal.
+  CHECK(layout.result.host_detail.sizeX > indent);
+
+  // Every GPU device, in a terminal wide enough for its whole header.
+  for (unsigned dev = 0; dev < layout.result.num_plots; ++dev) {
+    const struct window_position *header = &layout.result.device_positions[dev];
+    const struct window_position *chart = &layout.result.plot_positions[dev];
+    indent = layout_detail_indent(header, chart);
+    CHECK(header->posX + indent == chart->posX + PLOT_Y_AXIS_COL);
+    CHECK(indent < header->sizeX);
+  }
+
+  // A terminal as narrow as the device header: the header has no column of its
+  // own to lose, and it still lines up with the axis of its chart.
+  struct SectionLayout narrow;
+  compute(&narrow, 1u, 3u, 55u, 40u, 55u, 2u, false);
+  CHECK(narrow.result.device_positions[0].posX == 0u);
+  indent = layout_detail_indent(&narrow.result.device_positions[0], &narrow.result.plot_positions[0]);
+  CHECK(indent == PLOT_Y_AXIS_COL);
+  CHECK(narrow.result.plot_positions[0].sizeX > PLOT_COLUMNS_NOT_DATA);
+
+  // Nothing to align the rows on when there is no chart, and nothing to indent
+  // when there is no detail block either.
+  struct SectionLayout without_host;
+  compute(&without_host, 1u, 3u, 55u, 62u, 162u, 0u, false);
+  CHECK(without_host.result.host_chart.sizeY == 0u);
+  CHECK(layout_detail_indent(&without_host.result.host_detail, &without_host.result.host_chart) == 0u);
+  CHECK(layout_detail_indent(NULL, &layout.result.host_chart) == 0u);
+  CHECK(layout_detail_indent(&layout.result.host_detail, NULL) == 0u);
+  // A chart narrower than the frame and the gutter it needs draws nothing:
+  // there is no axis for the detail rows to line up with.
+  const struct window_position tiny = {0u, 0u, PLOT_COLUMNS_NOT_DATA, 10u};
+  CHECK(layout_detail_indent(&layout.result.host_detail, &tiny) == 0u);
+}
+
+// A chart moves its right border left by the readout gutter and takes the
+// columns of the gutter off its own data area: the section keeps the width the
+// row has, and every line of the chart owns exactly as many sample columns as
+// the others, the gutter being as wide as a clamped 100.0% is wide.
+static void test_chart_pays_for_its_readout_gutter(void) {
+  CHECK(PLOT_READOUT_VALUE_WIDTH == 6u);           // 100.0% is the widest value
+  CHECK(PLOT_READOUT_GUTTER_SIZE == 8u);           // value, a pad on each side
+  CHECK(PLOT_COLUMNS_NOT_DATA == PLOT_HORIZONTAL_OVERHEAD + PLOT_READOUT_GUTTER_SIZE);
+
+  const unsigned cols_values[] = {1u, 20u, 34u, 35u, 36u, 37u, 60u, 61u, 100u, 101u, 162u, 200u};
+  for (unsigned col_id = 0; col_id < sizeof(cols_values) / sizeof(*cols_values); ++col_id) {
+    for (unsigned lines = 1u; lines <= MAX_LINES_PER_PLOT; ++lines) {
+      struct SectionLayout layout;
+      compute(&layout, 1u, 3u, 55u, 40u, cols_values[col_id], lines, false);
+      if (layout.result.host_chart.sizeY == 0u)
+        continue; // Too narrow for that many lines: the chart is not drawn.
+      const unsigned data = layout.result.host_chart.sizeX - PLOT_COLUMNS_NOT_DATA;
+      // All of the frame and the gutter, and samples for every line of it.
+      CHECK(layout.result.host_chart.sizeX >= min_chart_cols(lines));
+      // The samples are shared out column for column between the lines.
+      CHECK(data % lines == 0u);
+      // What the row offers a line cannot hold another sample of every line:
+      // the chart takes as much of the row as it can, gutter included.
+      CHECK(data + lines + PLOT_COLUMNS_NOT_DATA > layout.cols);
+      // The gutter fits between the right border of the chart and the last
+      // column of the section, with the value never reaching either of them.
+      CHECK(PLOT_DATA_X_OFFSET + data + 1u + PLOT_READOUT_GUTTER_SIZE <= layout.result.host_chart.sizeX);
+    }
+  }
+}
+
 // Resizing recomputes the positions; it does not decide anything based on the
 // previous layout, so the histories the charts draw are untouched.
 static void test_resize_recomputes_positions(void) {
@@ -507,6 +591,8 @@ int main(void) {
   test_host_disabled_removes_the_cpu_section();
   test_one_or_two_host_lines_is_one_cpu_device();
   test_small_terminals_stay_valid();
+  test_detail_rows_line_up_with_the_chart_axis();
+  test_chart_pays_for_its_readout_gutter();
   test_resize_recomputes_positions();
   printf("%s: %u checks, %u failures\n", failures ? "FAILED" : "PASSED", checks, failures);
   return failures ? EXIT_FAILURE : EXIT_SUCCESS;

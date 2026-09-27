@@ -148,11 +148,12 @@ static unsigned int nvlink_line2_width(unsigned int spacer) {
 }
 
 static void alloc_device_window(unsigned int start_row, unsigned int start_col, unsigned int totalcol,
-                                struct device_window *dwin) {
+                                unsigned int detail_indent, struct device_window *dwin) {
 
   const unsigned int spacer = 1;
 
-  // Line 1 = Name | PCIe info
+  // Line 1 = Name | PCIe info: the title row of the device, alone at the column
+  // the section starts at.
 
   dwin->name_win = newwin(1, sizeof_device_field[device_name], start_row, start_col);
   if (dwin->name_win == NULL)
@@ -162,27 +163,31 @@ static void alloc_device_window(unsigned int start_row, unsigned int start_col, 
   if (dwin->pcie_info == NULL)
     goto alloc_error;
 
+  // Every row below the title row starts, for every device the same way, at
+  // the column the vertical Y axis of the chart of that device is drawn at.
+  const unsigned int detail_col = start_col + detail_indent;
+
   // Line 2 = GPU clk | MEM clk | Temp | Fan | Power | NVLink
-  dwin->gpu_clock_info = newwin(1, sizeof_device_field[device_clock], start_row + 1, start_col);
+  dwin->gpu_clock_info = newwin(1, sizeof_device_field[device_clock], start_row + 1, detail_col);
   if (dwin->gpu_clock_info == NULL)
     goto alloc_error;
   dwin->mem_clock_info = newwin(1, sizeof_device_field[device_mem_clock], start_row + 1,
-                                start_col + spacer + sizeof_device_field[device_clock]);
+                                detail_col + spacer + sizeof_device_field[device_clock]);
   if (dwin->mem_clock_info == NULL)
     goto alloc_error;
   dwin->temperature =
       newwin(1, sizeof_device_field[device_temperature], start_row + 1,
-             start_col + spacer * 2 + sizeof_device_field[device_clock] + sizeof_device_field[device_mem_clock]);
+             detail_col + spacer * 2 + sizeof_device_field[device_clock] + sizeof_device_field[device_mem_clock]);
   if (dwin->temperature == NULL)
     goto alloc_error;
   dwin->fan_speed = newwin(1, sizeof_device_field[device_fan_speed], start_row + 1,
-                           start_col + spacer * 3 + sizeof_device_field[device_clock] +
+                           detail_col + spacer * 3 + sizeof_device_field[device_clock] +
                                sizeof_device_field[device_mem_clock] + sizeof_device_field[device_temperature]);
   if (dwin->fan_speed == NULL)
     goto alloc_error;
   dwin->power_info =
       newwin(1, sizeof_device_field[device_power], start_row + 1,
-             start_col + spacer * 4 + sizeof_device_field[device_clock] + sizeof_device_field[device_mem_clock] +
+             detail_col + spacer * 4 + sizeof_device_field[device_clock] + sizeof_device_field[device_mem_clock] +
                  sizeof_device_field[device_temperature] + sizeof_device_field[device_fan_speed]);
   if (dwin->power_info == NULL)
     goto alloc_error;
@@ -190,7 +195,7 @@ static void alloc_device_window(unsigned int start_row, unsigned int start_col, 
   // at least one monitored GPU exposes ECC counters.
   if (any_device_has_ecc) {
     dwin->ecc_info = newwin(1, sizeof_device_field[device_ecc], start_row + 1,
-                            start_col + spacer * 5 + sizeof_device_field[device_clock] +
+                            detail_col + spacer * 5 + sizeof_device_field[device_clock] +
                                 sizeof_device_field[device_mem_clock] + sizeof_device_field[device_temperature] +
                                 sizeof_device_field[device_fan_speed] + sizeof_device_field[device_power]);
     if (dwin->ecc_info == NULL)
@@ -201,7 +206,7 @@ static void alloc_device_window(unsigned int start_row, unsigned int start_col, 
 
   // NVLink appended after power (and ECC when present) on the same row (start_row + 1)
   if (any_device_has_nvlink) {
-    dwin->nvlink_info = newwin(1, nvlink_line2_width(spacer), start_row + 1, start_col + nvlink_line2_start(spacer));
+    dwin->nvlink_info = newwin(1, nvlink_line2_width(spacer), start_row + 1, detail_col + nvlink_line2_start(spacer));
     if (dwin->nvlink_info == NULL)
       goto alloc_error;
   } else {
@@ -210,7 +215,9 @@ static void alloc_device_window(unsigned int start_row, unsigned int start_col, 
 
   // Line 3 = GPU used | MEM used | Encoder | Decoder
 
-  int remaining_cols = totalcol - 3 * spacer;
+  int remaining_cols = (int)totalcol - 3 * (int)spacer - (int)detail_indent;
+  if (remaining_cols < 0)
+    remaining_cols = 0;
   int size_gpu, size_mem, size_encode, size_decode;
   int quot, rem;
   quot = remaining_cols / 3;
@@ -244,57 +251,58 @@ static void alloc_device_window(unsigned int start_row, unsigned int start_col, 
     size_encode += 1;
   size_encode /= 2;
 
-  dwin->gpu_util_enc_dec = newwin(1, size_gpu, start_row + 2, start_col);
+  dwin->gpu_util_enc_dec = newwin(1, size_gpu, start_row + 2, detail_col);
   if (dwin->gpu_util_enc_dec == NULL)
     goto alloc_error;
-  dwin->mem_util_enc_dec = newwin(1, size_mem, start_row + 2, start_col + spacer + size_gpu);
+  dwin->mem_util_enc_dec = newwin(1, size_mem, start_row + 2, detail_col + spacer + size_gpu);
   if (dwin->mem_util_enc_dec == NULL)
     goto alloc_error;
-  dwin->encode_util = newwin(1, size_encode, start_row + 2, start_col + spacer * 2 + size_gpu + size_mem);
+  dwin->encode_util = newwin(1, size_encode, start_row + 2, detail_col + spacer * 2 + size_gpu + size_mem);
   if (dwin->encode_util == NULL)
     goto alloc_error;
-  dwin->decode_util = newwin(1, size_decode, start_row + 2, start_col + spacer * 3 + size_gpu + size_mem + size_encode);
+  dwin->decode_util =
+      newwin(1, size_decode, start_row + 2, detail_col + spacer * 3 + size_gpu + size_mem + size_encode);
   if (dwin->decode_util == NULL)
     goto alloc_error;
-  dwin->encdec_util = newwin(1, size_encode * 2, start_row + 2, start_col + spacer * 2 + size_gpu + size_mem);
+  dwin->encdec_util = newwin(1, size_encode * 2, start_row + 2, detail_col + spacer * 2 + size_gpu + size_mem);
   if (dwin->encdec_util == NULL)
     goto alloc_error;
   // For auto-hide encode / decode window
-  dwin->gpu_util_no_enc_or_dec = newwin(1, size_gpu + size_encode / 2 + 1, start_row + 2, start_col);
+  dwin->gpu_util_no_enc_or_dec = newwin(1, size_gpu + size_encode / 2 + 1, start_row + 2, detail_col);
   if (dwin->gpu_util_no_enc_or_dec == NULL)
     goto alloc_error;
   dwin->mem_util_no_enc_or_dec =
-      newwin(1, size_mem + size_encode / 2, start_row + 2, start_col + spacer + size_gpu + size_encode / 2 + 1);
+      newwin(1, size_mem + size_encode / 2, start_row + 2, detail_col + spacer + size_gpu + size_encode / 2 + 1);
   if (dwin->mem_util_no_enc_or_dec == NULL)
     goto alloc_error;
-  dwin->gpu_util_no_enc_and_dec = newwin(1, size_gpu + size_encode + 1, start_row + 2, start_col);
+  dwin->gpu_util_no_enc_and_dec = newwin(1, size_gpu + size_encode + 1, start_row + 2, detail_col);
   if (dwin->gpu_util_no_enc_and_dec == NULL)
     goto alloc_error;
   dwin->mem_util_no_enc_and_dec =
-      newwin(1, size_mem + size_encode + 1, start_row + 2, start_col + spacer + size_gpu + size_encode + 1);
+      newwin(1, size_mem + size_encode + 1, start_row + 2, detail_col + spacer + size_gpu + size_encode + 1);
   if (dwin->mem_util_no_enc_and_dec == NULL)
     goto alloc_error;
   dwin->enc_was_visible = false;
   dwin->dec_was_visible = false;
 
   // Line 4 = Number of shading cores | L2 Features
-  dwin->shader_cores = newwin(1, sizeof_device_field[device_shadercores], start_row + 3, start_col);
+  dwin->shader_cores = newwin(1, sizeof_device_field[device_shadercores], start_row + 3, detail_col);
   if (dwin->shader_cores == NULL)
     goto alloc_error;
   dwin->l2_cache_size = newwin(1, sizeof_device_field[device_l2features], start_row + 3,
-                               start_col + spacer + sizeof_device_field[device_shadercores]);
+                               detail_col + spacer + sizeof_device_field[device_shadercores]);
   if (dwin->l2_cache_size == NULL)
     goto alloc_error;
-  dwin->exec_engines =
-      newwin(1, sizeof_device_field[device_execengines], start_row + 3,
-             start_col + spacer * 2 + sizeof_device_field[device_shadercores] + sizeof_device_field[device_l2features]);
+  dwin->exec_engines = newwin(1, sizeof_device_field[device_execengines], start_row + 3,
+                              detail_col + spacer * 2 + sizeof_device_field[device_shadercores] +
+                                  sizeof_device_field[device_l2features]);
   if (dwin->exec_engines == NULL)
     goto alloc_error;
   // NVLink errors appended to exec_engines on the same row (start_row + 3), conditional on NVLink
   // Only allocate for devices with active links — 0-link devices have no error counters to show.
   if (any_device_has_nvlink_active) {
     dwin->nvlink_errors = newwin(1, sizeof_device_field[device_nvlink_errors], start_row + 3,
-                                 start_col + spacer * 3 + sizeof_device_field[device_shadercores] +
+                                 detail_col + spacer * 3 + sizeof_device_field[device_shadercores] +
                                      sizeof_device_field[device_l2features] + sizeof_device_field[device_execengines]);
     if (dwin->nvlink_errors == NULL)
       goto alloc_error;
@@ -368,11 +376,25 @@ static void alloc_process_with_option(struct nvtop_interface *interface, unsigne
 
 static void initialize_gpu_mem_plot(struct plot_window *plot, const struct window_position *position,
                                     nvtop_interface_option *options) {
+  plot->readout_window = NULL;
+  plot->plot_window = NULL;
+  plot->data = NULL;
+  plot->num_data = 0;
+  if (plot->num_data_lines == 0 || position->sizeX <= PLOT_COLUMNS_NOT_DATA || position->sizeY < 3)
+    return;
+
   unsigned rows = position->sizeY;
   unsigned cols = position->sizeX;
-  cols -= PLOT_HORIZONTAL_OVERHEAD;
+  // The frame of the chart stops short of the right edge of the section by the
+  // readout gutter, and the gutter takes its columns off the data area: the
+  // section keeps exactly the width the layout gave it, no curve ever reaches
+  // under a value, and no value ever reaches over the frame or the section.
+  cols -= PLOT_COLUMNS_NOT_DATA;
+  cols -= cols % plot->num_data_lines; // Every line owns the same samples
   rows -= 2;
   plot->plot_window = newwin(rows, cols, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET);
+  plot->readout_window =
+      newwin(rows, PLOT_READOUT_GUTTER_SIZE, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET + cols + 1);
   draw_rectangle(plot->win, PLOT_Y_AXIS_COL, 0, cols + 2, rows + 2);
 
   static const unsigned tick_values[] = {100u, 75u, 50u, 25u, 0u};
@@ -533,6 +555,8 @@ static unsigned host_chart_line_count(const struct nvtop_interface *interface) {
 static void free_host_plot(struct nvtop_interface *interface) {
   if (interface->host_plot.plot_window)
     delwin(interface->host_plot.plot_window);
+  if (interface->host_plot.readout_window)
+    delwin(interface->host_plot.readout_window);
   if (interface->host_plot.win)
     delwin(interface->host_plot.win);
   free(interface->host_plot.data);
@@ -544,6 +568,7 @@ static void free_host_plot(struct nvtop_interface *interface) {
 // detail block, that the layout places right above the combined CPU/RAM chart.
 static void alloc_host_detail_window(struct nvtop_interface *interface, const struct window_position *position) {
   interface->host_detail_window = NULL;
+  interface->host_detail_indent = 0;
   if (!position || position->sizeX == 0 || position->sizeY < HOST_DETAIL_LINE_COUNT)
     return;
   interface->host_detail_window = newwin(position->sizeY, position->sizeX, position->posY, position->posX);
@@ -553,7 +578,7 @@ static void alloc_host_plot(struct nvtop_interface *interface, const struct wind
                             unsigned num_data_lines) {
   memset(&interface->host_plot, 0, sizeof(interface->host_plot));
   interface->has_host_plot = false;
-  if (!position || position->sizeX <= PLOT_HORIZONTAL_OVERHEAD || position->sizeY < 3 || num_data_lines == 0)
+  if (!position || position->sizeX <= PLOT_COLUMNS_NOT_DATA || position->sizeY < 3 || num_data_lines == 0)
     return;
   interface->host_plot.num_data_lines = num_data_lines;
   interface->host_plot.win = newwin(position->sizeY, position->sizeX, position->posY, position->posX);
@@ -628,21 +653,29 @@ static void draw_host_detail(struct nvtop_interface *interface) {
   werase(win);
   char line[512];
   for (unsigned line_index = 0; line_index < HOST_DETAIL_LINE_COUNT; ++line_index) {
+    // The first row is the title of the CPU device and stays at the column of
+    // the section; the CPU and the RAM rows below it start at the vertical Y
+    // axis of the chart, and are given the room that is left of the block.
+    const unsigned indent = line_index == 0u ? 0u : min(interface->host_detail_indent, cols_of_win);
+    // The indent eats the room of the row: the line is built for what is left
+    // of it, so that a narrow terminal truncates it instead of pushing the end
+    // of it into the next section.
+    const unsigned room = cols_of_win > indent ? cols_of_win - indent : 0u;
     // The titles come back from the formatter with the line: where each of them
     // landed, and only for the ones that made it into the line.
     struct host_detail_field fields[HOST_DETAIL_FIELD_MAX];
-    host_metrics_format_detail_line_fields(state, line_index, cols_of_win, line, sizeof(line), fields,
+    host_metrics_format_detail_line_fields(state, line_index, room, line, sizeof(line), fields,
                                            HOST_DETAIL_FIELD_MAX);
-    mvwaddnstr(win, (int)line_index, 0, line, (int)strlen(line));
+    mvwaddnstr(win, (int)line_index, (int)indent, line, (int)strlen(line));
     for (unsigned field = 0; field < HOST_DETAIL_FIELD_MAX; ++field) {
-      if (fields[field].length == 0 || fields[field].offset >= cols_of_win)
+      if (fields[field].length == 0 || fields[field].offset >= room)
         continue;
       // The formatter never reports a title past the width it was given, but a
       // window narrower than the line it was built for stays possible.
       unsigned length = fields[field].length;
-      if (fields[field].offset + length > cols_of_win)
-        length = cols_of_win - fields[field].offset;
-      mvwchgat(win, (int)line_index, (int)fields[field].offset, (int)length, 0, cyan_color, NULL);
+      if (fields[field].offset + length > room)
+        length = room - fields[field].offset;
+      mvwchgat(win, (int)line_index, (int)(fields[field].offset + indent), (int)length, 0, cyan_color, NULL);
     }
   }
   wnoutrefresh(win);
@@ -662,10 +695,16 @@ static void draw_host_plot(struct nvtop_interface *interface) {
   nvtop_line_plot(plot->plot_window, plot->num_data, plot->data, num_lines, !interface->options.plot_left_to_right,
                   plot_legend);
   wnoutrefresh(plot->plot_window);
+
+  werase(plot->readout_window);
+  nvtop_plot_readouts(plot->readout_window, plot->num_data, plot->data, num_lines,
+                      !interface->options.plot_left_to_right);
+  wnoutrefresh(plot->readout_window);
 }
 
 static unsigned device_length(void) {
   const unsigned int spacer = 1;
+  const unsigned int detail_indent = PLOT_Y_AXIS_COL;
 
   unsigned line1 = sizeof_device_field[device_name] + sizeof_device_field[device_pcie] + 1;
 
@@ -683,7 +722,17 @@ static unsigned device_length(void) {
   if (any_device_has_nvlink)
     line2 = max(line2, nvlink_line2_start(spacer) + nvlink_line2_width(spacer) + 1);
 
-  return max(line1, line2);
+  // Every detail row is shifted to the chart Y axis. Include that indent in
+  // the requested panel width so curses never allocates a field past the
+  // terminal edge at the minimum supported width.
+  line2 += detail_indent;
+
+  unsigned line4 = detail_indent + sizeof_device_field[device_shadercores] + spacer +
+                   sizeof_device_field[device_l2features] + spacer + sizeof_device_field[device_execengines];
+  if (any_device_has_nvlink_active)
+    line4 += spacer + sizeof_device_field[device_nvlink_errors];
+
+  return max(line1, max(line2, line4));
 }
 
 static pid_t nvtop_pid;
@@ -736,6 +785,7 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
   alloc_plot_window(devices_count, plot_positions, map_device_to_plot, dwin);
   alloc_host_plot(dwin, &layout.host_chart, host_plot_lines);
   alloc_host_detail_window(dwin, &layout.host_detail);
+  dwin->host_detail_indent = layout_detail_indent(&layout.host_detail, &layout.host_chart);
 
   for (unsigned int i = 0; i < devices_count; ++i) {
     if (i >= MAX_CHARTS || map_device_to_plot[i] >= dwin->num_plots) {
@@ -747,6 +797,7 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
       continue;
     }
     alloc_device_window(device_positions[i].posY, device_positions[i].posX, device_positions[i].sizeX,
+                        layout_detail_indent(&device_positions[i], &plot_positions[map_device_to_plot[i]]),
                         &dwin->devices_win[i]);
   }
 
@@ -772,6 +823,8 @@ static void delete_all_windows(struct nvtop_interface *dwin) {
   for (size_t i = 0; i < dwin->num_plots; ++i) {
     delwin(dwin->plots[i].win);
     delwin(dwin->plots[i].plot_window);
+    if (dwin->plots[i].readout_window)
+      delwin(dwin->plots[i].readout_window);
     free(dwin->plots[i].data);
   }
   free_host_plot(dwin);
@@ -2382,18 +2435,27 @@ static unsigned populate_plot_data_from_ring_buffer(struct list_head *devices, c
 
 static void draw_plots(struct list_head *devices, struct nvtop_interface *interface) {
   for (unsigned plot_id = 0; plot_id < interface->num_plots; ++plot_id) {
-    werase(interface->plots[plot_id].plot_window);
+    struct plot_window *plot = &interface->plots[plot_id];
+    // A chart the terminal is too narrow to draw was never allocated: it draws
+    // nothing at all, and its device keeps its detail block and its history.
+    if (!plot->plot_window || !plot->readout_window)
+      continue;
+    werase(plot->plot_window);
 
     char plot_legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE];
 
-    unsigned num_lines = populate_plot_data_from_ring_buffer(devices, interface, &interface->plots[plot_id],
-                                                             interface->plots[plot_id].num_data,
-                                                             interface->plots[plot_id].data, plot_legend);
+    unsigned num_lines =
+        populate_plot_data_from_ring_buffer(devices, interface, plot, plot->num_data, plot->data, plot_legend);
 
-    nvtop_line_plot(interface->plots[plot_id].plot_window, interface->plots[plot_id].num_data,
-                    interface->plots[plot_id].data, num_lines, !interface->options.plot_left_to_right, plot_legend);
+    nvtop_line_plot(plot->plot_window, plot->num_data, plot->data, num_lines, !interface->options.plot_left_to_right,
+                    plot_legend);
 
-    wnoutrefresh(interface->plots[plot_id].plot_window);
+    wnoutrefresh(plot->plot_window);
+
+    werase(plot->readout_window);
+    nvtop_plot_readouts(plot->readout_window, plot->num_data, plot->data, num_lines,
+                        !interface->options.plot_left_to_right);
+    wnoutrefresh(plot->readout_window);
   }
 }
 

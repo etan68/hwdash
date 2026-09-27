@@ -31,6 +31,15 @@
 void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned num_plots, bool legend_left,
                      char legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE]);
 
+// Draw the current value of every line of a chart in the window the frame left
+// free at its right edge, one row per line, in the color of that line. The
+// window is the readout gutter of that chart and nothing else: it holds no
+// curve, no border, no legend and no time axis, so a value never overwrites
+// any of them. num_data and data are the samples the chart draws, legend_left
+// says which end of the chart the oldest sample lies at. The window must have
+// been erased by the caller, as the plot window is.
+void nvtop_plot_readouts(WINDOW *win, size_t num_data, const double *data, unsigned num_lines, bool legend_left);
+
 void draw_rectangle(WINDOW *win, unsigned startX, unsigned startY, unsigned sizeX, unsigned sizeY);
 
 #endif // __PLOT_H_

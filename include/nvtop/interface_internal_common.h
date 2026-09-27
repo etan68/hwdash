@@ -109,6 +109,9 @@ struct plot_window {
   unsigned num_data_lines; // Number of lines drawn in this chart, interleaved in data
   WINDOW *win;
   WINDOW *plot_window;
+  // The readout gutter the frame of the chart stops short of: the current
+  // value of every line of the chart, and nothing else.
+  WINDOW *readout_window;
   unsigned num_devices_to_plot;
   unsigned devices_ids[MAX_LINES_PER_PLOT];
 };
@@ -154,6 +157,9 @@ struct nvtop_interface {
   // the way the GPU detail blocks sit above their own charts. NULL when the
   // CPU device is not displayed.
   WINDOW *host_detail_window;
+  // Columns the CPU rows of the detail block are pushed by, so that they start
+  // at the vertical Y axis of the chart of the CPU device.
+  unsigned host_detail_indent;
 };
 
 enum device_field {

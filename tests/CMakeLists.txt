@@ -41,7 +41,9 @@ if (BUILD_TESTING)
   add_test(NAME plotLegendTest COMMAND plotLegendTest)
 
   # The plot geometry keeps the 100% line clear of the legend, aligns every
-  # Y-axis tick with the data scale, and drops the final left-edge connector.
+  # Y-axis tick with the data scale, keeps the left edge of a chart free of any
+  # leftover mark, and places the current value of every line of a chart in its
+  # readout gutter. No ncurses either: the placement is plain arithmetic.
   add_executable(
     plotGeometryTest
     plotGeometryTest.c

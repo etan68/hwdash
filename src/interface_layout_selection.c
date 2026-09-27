@@ -1,6 +1,7 @@
 #include "nvtop/interface_layout_selection.h"
 #include "nvtop/interface.h"
 #include "nvtop/interface_options.h"
+#include "nvtop/plot_geometry.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -16,11 +17,11 @@ static unsigned min_rows_taken_by_process(unsigned rows, unsigned num_devices) {
   return 1 + max(5, min(rows / 4, num_devices * 3));
 }
 
-static const unsigned cols_needed_box_drawing = 5;
-
-// The narrowest chart that can draw that many percentage lines.
+// The narrowest chart that can draw that many percentage lines and read out
+// their current value: the box drawing, the readout gutter, and ten columns of
+// data per line.
 static unsigned min_plot_cols(unsigned num_data_info_to_plot) {
-  return cols_needed_box_drawing + 10 * num_data_info_to_plot;
+  return PLOT_COLUMNS_NOT_DATA + 10u * num_data_info_to_plot;
 }
 
 // The monitoring screen, section by section //////////////////////////////////
@@ -59,6 +60,28 @@ static unsigned min_plot_cols(unsigned num_data_info_to_plot) {
 // index to the lowest, always recomputing the shared chart height in between. A
 // device that is left out has no header, no chart and no chart to be mapped to,
 // so that a header never introduces somebody else's chart.
+
+// The vertical Y axis of a chart, in the coordinates of the terminal.
+static unsigned chart_y_axis_column(const struct window_position *chart) { return chart->posX + PLOT_Y_AXIS_COL; }
+
+// The first row of the detail block of a device is its title row, and it stays
+// where the section puts it. Every row below it is indented so that its first
+// field starts at the column the chart of that same device draws its vertical Y
+// axis at, which lines the values up with the curves they belong to. A detail
+// block, or the chart that goes with it, that the terminal cannot show has no
+// rows to indent at all.
+unsigned layout_detail_indent(const struct window_position *detail, const struct window_position *chart) {
+  if (!detail || !chart)
+    return 0u;
+  if (detail->sizeX == 0u || detail->sizeY == 0u || chart->sizeX == 0u || chart->sizeY == 0u)
+    return 0u;
+  // A chart that narrow has no data column at all and is not drawn: there is
+  // no axis for the detail rows to line up with.
+  if (chart->sizeX <= PLOT_COLUMNS_NOT_DATA)
+    return 0u;
+  const unsigned axis = chart_y_axis_column(chart);
+  return axis > detail->posX ? axis - detail->posX : 0u;
+}
 
 const char *layout_section_kind_name(enum layout_section_kind kind) {
   switch (kind) {
@@ -112,10 +135,12 @@ static struct window_position full_row_chart_position(unsigned cols, unsigned nu
                                                       unsigned height) {
   if (num_lines == 0 || num_lines > MAX_LINES_PER_PLOT)
     return (struct window_position){0, 0, 0, 0};
-  unsigned cols_for_line_drawing = saturating_subtraction(cols, cols_needed_box_drawing);
-  unsigned max_cols = cols_needed_box_drawing + cols_for_line_drawing * num_lines / num_lines;
-  unsigned plot_cols = max_cols - (max_cols - cols_needed_box_drawing) % num_lines;
-  return (struct window_position){0, pos_y, plot_cols, height};
+  // What is left of the row once the labels, the borders and the readout
+  // gutter are taken is shared out between the lines, column for column, so
+  // that every line of the chart has exactly as many samples as the others.
+  unsigned data_cols = saturating_subtraction(cols, PLOT_COLUMNS_NOT_DATA);
+  data_cols -= data_cols % num_lines;
+  return (struct window_position){0, pos_y, PLOT_COLUMNS_NOT_DATA + data_cols, height};
 }
 
 // How many percentage lines the chart of a device draws. A device that draws

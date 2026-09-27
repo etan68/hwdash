@@ -113,6 +113,23 @@ color of the plot line they stand for, so a GPU chart reads ``GPU0 % ---    GPU0
 CPU chart ``CPU % ---    RAM % ---``. The current value of a metric is not part of its legend: the
 detail block right above each chart already shows the values.
 
+The current value of every line of a chart is instead read out in a **gutter** at the right edge of
+the chart. The frame stops short of the right edge of the section by the width of that gutter, so the
+section keeps the width the layout gave it, and the values are written outside the frame, outside the
+curves and outside the legend, each in the color of its line: ``0.4%``, ``92.6%``, ``100.0%``. A value
+sits on the row its own line ends on, so the number is level with the end of its curve; when two values
+would land on the same row, or too close for both to be read, they take separate adjacent rows, the
+higher value above the lower one and, when two values are equal, the lower plot line above the higher
+one - ``CPU %`` above ``RAM %``, ``GPU0 %`` above ``GPU0 mem%``. A readout always stays inside the data
+region, below the legend and above the time axis, so neither a 0% nor a 100% ever escapes the chart,
+and no value repeats the name of its metric, which is what the legend is for. A line whose newest
+sample is not available shows no readout at all, never an invented 0%.
+
+The oldest edge of a chart is kept clean: a curve begins at the first sample that belongs to a
+continuous visible segment, and the oldest sample leaves the chart together with the connector that
+used to follow it, so no leftover mark is ever left hanging at the edge. With the time axis reversed
+the left edge is the newest one and keeps the head of every line.
+
 ### Screen layout
 
 The monitoring screen is a stack of sections, from the top of the terminal to the bottom:
@@ -126,6 +143,12 @@ The monitoring screen is a stack of sections, from the top of the terminal to th
 
 One blank row separates two sections. It never separates a device detail block from its own chart,
 so a GPU header only ever introduces the chart right below it.
+
+The first row of a detail block is the title row of its device - ``Device CPU [...]``, ``Device 0
+[...]`` - and it stays at the column of the section. Every row below it is indented to the column the
+vertical Y axis of the chart of that same device is drawn at, so the clocks, the temperatures, the
+powers and the GPU / GPU memory bars all start lined up with the axis of the chart right below them.
+A narrow terminal truncates those rows; it never wraps them into the section that follows.
 
 - The CPU chart is an ordinary chart: it gets the same outer dimensions, the same row height, the
   same full chart row width, and the same resize and narrow terminal behaviour as the GPU charts. No
