@@ -78,7 +78,7 @@
 #define HOST_LENOVO_FAN_MAX_PLAUSIBLE_RPM 30000u
 #define HOST_LENOVO_FAN_PROBE_GIVE_UP_AFTER 4u
 #define HOST_LENOVO_FAN_PROBE_RETRY_PERIOD 64u
-#define HOST_LENOVO_FAN_HELPER_PATH "/run/nvtop/lenovo-cpu-fan-rpm"
+#define HOST_LENOVO_FAN_HELPER_PATH "/run/hwdash/lenovo-cpu-fan-rpm"
 #define HOST_LENOVO_FAN_HELPER_MAX_AGE_SECONDS 5
 #define HOST_DMI_SYS_VENDOR_PATH "/sys/class/dmi/id/sys_vendor"
 
@@ -1337,7 +1337,10 @@ static bool read_lenovo_fan_rpm_file(const char *path, unsigned *rpm) {
 }
 
 static bool helper_lenovo_cpu_fan(unsigned *rpm) {
-  const char *path = getenv("NVTOP_LENOVO_CPU_FAN_RPM_PATH");
+  const char *path = getenv("HWDASH_LENOVO_CPU_FAN_RPM_PATH");
+  // Keep the old test/development override working for existing checkouts.
+  if (!path || !path[0])
+    path = getenv("NVTOP_LENOVO_CPU_FAN_RPM_PATH");
   if (!path || !path[0])
     path = HOST_LENOVO_FAN_HELPER_PATH;
   struct stat attributes;

@@ -313,7 +313,7 @@ static void authenticate_drm(int fd) {
       perror("Failed to drop DRM master");
       fprintf(
           stderr,
-          "\nWARNING: other DRM clients will crash on VT switch while nvtop is running!\npress ENTER to continue\n");
+          "\nWARNING: other DRM clients will crash on VT switch while hwdash is running!\npress ENTER to continue\n");
       fgetc(stdin);
     }
     return;

@@ -1,10 +1,9 @@
 [Desktop Entry]
-Name=nvtop
-GenericName=GPU Process Monitor
+Name=HWDash
+GenericName=Hardware Monitor
 Type=Application
 Terminal=true
-Exec=nvtop
-Icon=nvtop
+Exec=hwdash
+Icon=hwdash
 Categories=System;Monitor;
 X-AppImage-Integrate=false
-

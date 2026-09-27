@@ -1,12 +1,13 @@
-name: nvtop
+name: hwdash
 base: core22
-adopt-info: nvtop
-summary: 'GPUs monitoring tool for AMD, Intel and NVIDIA'
+adopt-info: hwdash
+summary: 'Terminal CPU, memory, GPU and process monitor'
 description: |
-  Nvtop stands for Neat Videocard TOP, a (h)top like task monitor for AMD, Intel and NVIDIA GPUs. It can handle multiple GPUs and print information about them in a htop familiar way.
+  hwdash is a terminal hardware monitor based on nvtop. It combines host CPU
+  and memory monitoring with nvtop's multi-vendor accelerator backends.
 license: GPL-3.0-or-later
-issues: https://github.com/Syllo/nvtop/issues
-icon: desktop/nvtop.svg
+issues: https://github.com/etan68/hwdash/issues
+icon: desktop/hwdash.svg
 grade: stable
 confinement: strict
 architectures:
@@ -17,16 +18,16 @@ architectures:
 - build-on: s390x
 compression: lzo
 apps:
-  nvtop:
-    command: usr/bin/nvtop
-    desktop: usr/share/applications/nvtop.desktop
+  hwdash:
+    command: usr/bin/hwdash
+    desktop: usr/share/applications/hwdash.desktop
     plugs:
     - opengl
     - home
     - hardware-observe
     - process-control
     - system-observe
-    # - kubernetes-support # Temporarily required for nvtop to display AMD GPU processes. Once apparmor rule to allow access to @{PROC}/[0-9]*/fdinfo/ is added to system-observe, this can be removed.
+    # - kubernetes-support # Temporarily required to display AMD GPU processes. Once apparmor allows @{PROC}/[0-9]*/fdinfo/ through system-observe, this can be removed.
 # layout:
 #   /usr/share/libdrm:
 #     symlink: $SNAP/usr/share/libdrm
@@ -54,7 +55,7 @@ parts:
     prime:
     - -usr/include
     - -usr/lib/$CRAFT_ARCH_TRIPLET/pkgconfig
-  nvtop:
+  hwdash:
     after: [ libdrm ]
     source: .
     plugin: cmake

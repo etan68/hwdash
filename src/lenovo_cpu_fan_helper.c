@@ -25,8 +25,8 @@
 
 #define DEFAULT_EC_PATH "/sys/kernel/debug/ec/ec0/io"
 #define DEV_PORT_PATH "/dev/port"
-#define DEFAULT_OUTPUT_PATH "/run/nvtop/lenovo-cpu-fan-rpm"
-#define LOCK_DIRECTORY "/run/nvtop"
+#define DEFAULT_OUTPUT_PATH "/run/hwdash/lenovo-cpu-fan-rpm"
+#define LOCK_DIRECTORY "/run/hwdash"
 #define LOCK_PATH LOCK_DIRECTORY "/lenovo-ec.lock"
 #define SYS_VENDOR_PATH "/sys/class/dmi/id/sys_vendor"
 #define EC_STATUS_PORT 0x66
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
       }
     } else {
       // Never leave a stale valid-looking speed behind when the EC read is not
-      // coherent. nvtop also rejects an old file if this process is killed.
+      // coherent. hwdash also rejects an old file if this process is killed.
       unlink(output);
       if (once) {
         fprintf(stderr, "No coherent CPU fan RPM in EC offsets 0x0a:0x09.\n");

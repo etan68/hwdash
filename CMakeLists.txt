@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.18)
 #                              PROJECT                              #
 #///////////////////////////////////////////////////////////////////#
 
+# Keep the upstream project namespace internally.  The installed product is
+# hwdash; retaining nvtop's CMake/version namespace keeps future upstream
+# backend merges small and reviewable.
 project(nvtop VERSION 3.3.2
   LANGUAGES C CXX)
 
@@ -161,28 +164,28 @@ add_subdirectory(src)
 string(TIMESTAMP TODAY_MANPAGE "%B %Y")
 string(TIMESTAMP TODAY_ISO_8601 "%Y-%m-%d")
 configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/manpage/nvtop.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/manpage/nvtop"
+  "${CMAKE_CURRENT_SOURCE_DIR}/manpage/hwdash.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/manpage/hwdash"
   IMMEDIATE @ONLY)
 configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/nvtop.metainfo.xml.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/desktop/io.github.syllo.nvtop.metainfo.xml"
+  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/hwdash.metainfo.xml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/desktop/io.github.etan68.hwdash.metainfo.xml"
   IMMEDIATE @ONLY)
 install(FILES
-  "${CMAKE_CURRENT_BINARY_DIR}/manpage/nvtop"
+  "${CMAKE_CURRENT_BINARY_DIR}/manpage/hwdash"
   DESTINATION share/man/man1/
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  RENAME nvtop.1)
+  RENAME hwdash.1)
 install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/nvtop.svg"
+  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/hwdash.svg"
   DESTINATION share/icons/hicolor/scalable/apps
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/nvtop.desktop"
+  "${CMAKE_CURRENT_SOURCE_DIR}/desktop/hwdash.desktop"
   DESTINATION share/applications
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 install(FILES
-  "${CMAKE_CURRENT_BINARY_DIR}/desktop/io.github.syllo.nvtop.metainfo.xml"
+  "${CMAKE_CURRENT_BINARY_DIR}/desktop/io.github.etan68.hwdash.metainfo.xml"
   DESTINATION share/metainfo
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 

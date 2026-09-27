@@ -10,22 +10,22 @@ install_deps() {
 	  wget file libudev-dev ninja-build cmake file desktop-file-utils
 }
 
-configure_nvtop() {
+configure_hwdash() {
 	cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
 	  -DUSE_LIBUDEV_OVER_LIBSYSTEMD=ON -DCMAKE_INSTALL_PREFIX=/usr
 }
 
-build_nvtop() {
+build_hwdash() {
 	cmake --build build
 }
 
-install_nvtop_AppDir() {
+install_hwdash_AppDir() {
 	DESTDIR=$PWD/AppDir cmake --build build --target install
 }
 
 bundle_dependencies() {
 	mkdir -p AppDir/usr/lib
-	ldd AppDir/usr/bin/nvtop | awk -F"[> ]" '{print $4}' \
+	ldd AppDir/usr/bin/hwdash | awk -F"[> ]" '{print $4}' \
 	  | xargs -I {} cp -vf {} AppDir/usr/lib
 	cp -v /lib64/ld-linux-x86-64.so.2 AppDir
 }
@@ -35,12 +35,12 @@ configure_appdir() {
 	#!/bin/sh
 	HERE="$(readlink -f "$(dirname "$0")")"
 	exec "$HERE/ld-linux-x86-64.so.2" \
-	  --library-path "$HERE/usr/lib" "$HERE"/usr/bin/nvtop "$@"
+	  --library-path "$HERE/usr/lib" "$HERE"/usr/bin/hwdash "$@"
 	EOF
 	chmod u+x AppDir/AppRun
-	ln -s usr/share/applications/nvtop.desktop AppDir
-	ln -s usr/share/icons/nvtop.svg AppDir
-	ln -s usr/share/icons/nvtop.svg AppDir/.DirIcon
+	ln -s usr/share/applications/hwdash.desktop AppDir
+	ln -s usr/share/icons/hicolor/scalable/apps/hwdash.svg AppDir
+	ln -s usr/share/icons/hicolor/scalable/apps/hwdash.svg AppDir/.DirIcon
 }
 
 get_appimagetool() {
@@ -50,9 +50,9 @@ get_appimagetool() {
 
 create_AppImage() {
 	install_deps
-	configure_nvtop
-	build_nvtop
-	install_nvtop_AppDir
+	configure_hwdash
+	build_hwdash
+	install_hwdash_AppDir
 	bundle_dependencies
 	configure_appdir
 	get_appimagetool

@@ -22,6 +22,10 @@ add_executable(nvtop
   ini.c
 )
 
+# Preserve the upstream target name for easy backend merges while publishing
+# this fork under its own executable name.
+set_property(TARGET nvtop PROPERTY OUTPUT_NAME hwdash)
+
 check_c_source_compiles(
   "
   #include <stdlib.h>
@@ -215,15 +219,15 @@ install(TARGETS nvtop
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   include(GNUInstallDirs)
-  add_executable(nvtop-lenovo-cpu-fan-helper lenovo_cpu_fan_helper.c)
-  set_property(TARGET nvtop-lenovo-cpu-fan-helper PROPERTY C_STANDARD 11)
-  target_compile_definitions(nvtop-lenovo-cpu-fan-helper PRIVATE _GNU_SOURCE)
-  install(TARGETS nvtop-lenovo-cpu-fan-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+  add_executable(hwdash-lenovo-cpu-fan-helper lenovo_cpu_fan_helper.c)
+  set_property(TARGET hwdash-lenovo-cpu-fan-helper PROPERTY C_STANDARD 11)
+  target_compile_definitions(hwdash-lenovo-cpu-fan-helper PRIVATE _GNU_SOURCE)
+  install(TARGETS hwdash-lenovo-cpu-fan-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
   configure_file(
-    "${PROJECT_SOURCE_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service.in"
-    "${PROJECT_BINARY_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service"
+    "${PROJECT_SOURCE_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service.in"
+    "${PROJECT_BINARY_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service"
     @ONLY)
-  install(FILES "${PROJECT_BINARY_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service"
+  install(FILES "${PROJECT_BINARY_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service"
     DESTINATION lib/systemd/system)
 endif()
 

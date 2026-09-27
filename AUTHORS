@@ -1,0 +1,12 @@
+hwdash changes
+===============
+
+Copyright (C) 2026 etan68 and hwdash contributors.
+
+Upstream foundation
+===================
+
+hwdash is based on nvtop by Maxime Schmitt and nvtop contributors.
+Individual inherited source files retain their original copyright notices.
+See the nvtop project history and https://github.com/Syllo/nvtop for the full
+upstream contributor record.
