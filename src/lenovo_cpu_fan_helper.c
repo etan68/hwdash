@@ -26,6 +26,8 @@
 #define DEFAULT_EC_PATH "/sys/kernel/debug/ec/ec0/io"
 #define DEV_PORT_PATH "/dev/port"
 #define DEFAULT_OUTPUT_PATH "/run/nvtop/lenovo-cpu-fan-rpm"
+#define LOCK_DIRECTORY "/run/nvtop"
+#define LOCK_PATH LOCK_DIRECTORY "/lenovo-ec.lock"
 #define SYS_VENDOR_PATH "/sys/class/dmi/id/sys_vendor"
 #define EC_STATUS_PORT 0x66
 #define EC_DATA_PORT 0x62
@@ -198,11 +200,20 @@ int main(int argc, char **argv) {
 
   int lock_fd = -1;
   if (direct_ports) {
-    lock_fd = open("/run/lock/nvtop-lenovo-ec.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (lock_fd < 0 || flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+    if (mkdir(LOCK_DIRECTORY, 0755) != 0 && errno != EEXIST) {
+      fprintf(stderr, "Cannot create %s: %s\n", LOCK_DIRECTORY, strerror(errno));
+      close(ec);
+      return 1;
+    }
+    lock_fd = open(LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (lock_fd < 0) {
+      fprintf(stderr, "Cannot open %s: %s\n", LOCK_PATH, strerror(errno));
+      close(ec);
+      return 1;
+    }
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
       fprintf(stderr, "Another process is reading the Lenovo EC.\n");
-      if (lock_fd >= 0)
-        close(lock_fd);
+      close(lock_fd);
       close(ec);
       return 1;
     }
