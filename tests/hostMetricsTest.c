@@ -454,6 +454,9 @@ static void fill_detail_state(struct host_metrics_state *state) {
   state->swap_total_gib = 8.;
   state->power_valid = true;
   state->package_power_watts = 15.5;
+  state->lenovo_fan_supported = true;
+  state->lenovo_fan_valid = true;
+  state->lenovo_fan_rpm = 1834u;
   state->identity_valid = true;
   state->identity.model_valid = true;
   snprintf(state->identity.model, sizeof(state->identity.model), "%s", "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz");
@@ -487,10 +490,11 @@ static void test_detail_block(void) {
         strlen("Device CPU [Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz]  CORES 6C/12T"));
   CHECK(strcmp(line, "Device CPU [Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz]  CORES 6C/12T") == 0);
   CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
-        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W"));
-  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W") == 0);
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM"));
+  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM") == 0);
   CHECK(strstr(line, "LOAD 0.42 / 0.38 / 0.35") != NULL);
   CHECK(strstr(line, "POWER 15.5W") != NULL);
+  CHECK(strstr(line, "Lenovo CPU Fan 1834 RPM") != NULL);
   CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
         strlen("RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB   SWAP 0.50/8.00 GiB"));
   CHECK(strstr(line, "RAM  3.21/31.26 GiB 10.3%") == line);
@@ -505,6 +509,7 @@ static void test_detail_block(void) {
   const unsigned width_no_load15 = first_width_without(&state, 1u, "/ 0.35");
   const unsigned width_no_load5 = first_width_without(&state, 1u, "/ 0.38");
   const unsigned width_no_avail = first_width_without(&state, 2u, "AVAIL");
+  const unsigned width_no_fan = first_width_without(&state, 1u, "Lenovo CPU Fan");
   const unsigned width_no_power = first_width_without(&state, 1u, "POWER");
   const unsigned width_no_freq = first_width_without(&state, 1u, "FREQ");
   CHECK(width_no_swap > 0u && width_no_load15 > 0u && width_no_load5 > 0u && width_no_avail > 0u);
@@ -512,7 +517,8 @@ static void test_detail_block(void) {
                                            // before the available memory,
   CHECK(width_no_load15 > width_no_load5); // and on the CPU line the load
                                            // averages go newest last,
-  CHECK(width_no_load5 > width_no_power);  // then the package power,
+  CHECK(width_no_load5 > width_no_fan);    // then the fan speed,
+  CHECK(width_no_fan > width_no_power);    // then the package power,
   CHECK(width_no_power > width_no_freq);   // then the static information.
   // Where the power had to go, the CPU utilization is still there: the fields
   // that carry it are never dropped.
@@ -637,11 +643,12 @@ static void test_detail_field_titles(void) {
 
   CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
                                                HOST_DETAIL_FIELD_MAX) == strlen(line));
-  CHECK(reported_title_count(fields, line) == 4u);
+  CHECK(reported_title_count(fields, line) == 5u);
   CHECK(reported_title_is(fields, line, "CPU"));
   CHECK(reported_title_is(fields, line, "FREQ"));
   CHECK(reported_title_is(fields, line, "LOAD"));
   CHECK(reported_title_is(fields, line, "POWER"));
+  CHECK(reported_title_is(fields, line, "Lenovo CPU Fan"));
 
   CHECK(host_metrics_format_detail_line_fields(&state, 2u, DETAIL_WIDTH, line, sizeof(line), fields,
                                                HOST_DETAIL_FIELD_MAX) == strlen(line));
@@ -667,9 +674,17 @@ static void test_detail_field_titles(void) {
   CHECK(reported_title_count(fields, line) == 4u);
   CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A   POWER N/A") == 0);
 
+  // A Lenovo machine keeps the field visible while its privileged helper is
+  // unavailable; another vendor has no Lenovo-only field at all.
+  unknown.lenovo_fan_supported = true;
+  CHECK(host_metrics_format_detail_line_fields(&unknown, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 5u);
+  CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A   POWER N/A   Lenovo CPU Fan N/A") == 0);
+
   // Unusable input: the titles are optional.
   CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), NULL, 0u) ==
-        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W"));
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM"));
   CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields, 0u) ==
         strlen(line));
   CHECK(host_metrics_format_detail_line_fields(&state, HOST_DETAIL_LINE_COUNT, DETAIL_WIDTH, line, sizeof(line),
@@ -823,6 +838,22 @@ static void test_package_power(void) {
   CHECK(nearly_equal(watts, 30.));
 }
 
+static void test_cpu_fan_rpm(void) {
+  unsigned rpm = 99u;
+  CHECK(host_lenovo_fan_parse_rpm_text("1834\n", &rpm));
+  CHECK(rpm == 1834u);
+  CHECK(host_lenovo_fan_parse_rpm_text("  30000 \r\n", &rpm));
+  CHECK(rpm == 30000u);
+  CHECK(host_lenovo_fan_parse_rpm_text("0\n", &rpm));
+  CHECK(rpm == 0u);
+  CHECK(!host_lenovo_fan_parse_rpm_text("30001\n", &rpm));
+  CHECK(!host_lenovo_fan_parse_rpm_text("-100\n", &rpm));
+  CHECK(!host_lenovo_fan_parse_rpm_text("1200 RPM\n", &rpm));
+  CHECK(!host_lenovo_fan_parse_rpm_text("", &rpm));
+  CHECK(!host_lenovo_fan_parse_rpm_text(NULL, &rpm));
+  CHECK(!host_lenovo_fan_parse_rpm_text("1200\n", NULL));
+}
+
 static void test_history(void) {
   struct host_metrics_state state;
   double sample = 1.;
@@ -915,6 +946,7 @@ int main(void) {
   test_detail_block();
   test_detail_field_titles();
   test_package_power();
+  test_cpu_fan_rpm();
   test_legend_keys();
   test_history();
   test_update_without_support();

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "nvtop/time.h" // The monotonic clock the power is a rate over
 
@@ -35,6 +36,7 @@
 #if defined(__linux__) || defined(HOST_METRICS_FORCE_PROC)
 #define HOST_METRICS_LINUX 1
 #include <dirent.h> // The powercap and hwmon directories are scanned, not guessed
+#include <sys/stat.h>
 #endif
 
 #define HOST_METRICS_ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
@@ -73,9 +75,19 @@
 #define HOST_FREQ_PROBE_RETRY_PERIOD 256u
 #define HOST_FREQ_PROBE_GIVE_UP_AFTER 4u
 
+#define HOST_LENOVO_FAN_MAX_PLAUSIBLE_RPM 30000u
+#define HOST_LENOVO_FAN_PROBE_GIVE_UP_AFTER 4u
+#define HOST_LENOVO_FAN_PROBE_RETRY_PERIOD 64u
+#define HOST_LENOVO_FAN_HELPER_PATH "/run/nvtop/lenovo-cpu-fan-rpm"
+#define HOST_LENOVO_FAN_HELPER_MAX_AGE_SECONDS 5
+#define HOST_DMI_SYS_VENDOR_PATH "/sys/class/dmi/id/sys_vendor"
+
 #define HOST_KIB_PER_GIB (1024. * 1024.)
 
 static double kib_to_gib(uint64_t kib) { return (double)kib / HOST_KIB_PER_GIB; }
+
+static const char *skip_blanks(const char *text);
+static bool parse_u64_token(const char **cursor, uint64_t *value);
 
 bool host_metrics_platform_supported(void) {
 #ifdef HOST_METRICS_LINUX
@@ -83,6 +95,19 @@ bool host_metrics_platform_supported(void) {
 #else
   return false;
 #endif
+}
+
+bool host_lenovo_fan_parse_rpm_text(const char *text, unsigned *rpm) {
+  if (!text || !rpm)
+    return false;
+  const char *cursor = text;
+  uint64_t parsed = 0;
+  if (!parse_u64_token(&cursor, &parsed))
+    return false;
+  if (*skip_blanks(cursor) != '\0' || parsed > HOST_LENOVO_FAN_MAX_PLAUSIBLE_RPM)
+    return false;
+  *rpm = (unsigned)parsed;
+  return true;
 }
 
 static const char *skip_spaces(const char *text) {
@@ -788,6 +813,10 @@ void host_metrics_release(struct host_metrics_state *state) {
   state->identity_valid = false;
   state->identity_probed = false;
   state->power_valid = false;
+  state->lenovo_fan_valid = false;
+  state->lenovo_fan_supported = false;
+  state->lenovo_fan_support_probed = false;
+  state->lenovo_fan_probe_failures = 0u;
   state->has_last_power = false;
   state->power_source[0] = '\0';
   state->power_probe_failures = 0u;
@@ -845,6 +874,7 @@ enum host_detail_priority {
   host_detail_priority_always = 100,
   host_detail_priority_static = 60, // Model, core count, frequency, load 1 minute
   host_detail_priority_power = 45,
+  host_detail_priority_lenovo_fan = 44,
   host_detail_priority_available = 40,
   host_detail_priority_load_5m = 30,
   host_detail_priority_load_15m = 25,
@@ -958,6 +988,7 @@ static unsigned format_detail_line(const struct host_metrics_state *state, unsig
   const bool load_valid = state && state->load_valid;
   const bool swap_valid = state && state->swap_valid;
   const bool power_valid = state && state->power_valid;
+  const bool lenovo_fan_valid = state && state->lenovo_fan_valid;
   const struct host_cpu_identity *identity = state ? &state->identity : NULL;
 
   struct host_detail_segment segments[8];
@@ -1012,6 +1043,14 @@ static unsigned format_detail_line(const struct host_metrics_state *state, unsig
                      state->package_power_watts);
     else
       detail_segment(&segments[count++], host_detail_priority_power, true, "POWER", "   POWER N/A");
+    if (state && state->lenovo_fan_supported) {
+      if (lenovo_fan_valid)
+        detail_segment(&segments[count++], host_detail_priority_lenovo_fan, true, "Lenovo CPU Fan",
+                       "   Lenovo CPU Fan %u RPM", state->lenovo_fan_rpm);
+      else
+        detail_segment(&segments[count++], host_detail_priority_lenovo_fan, true, "Lenovo CPU Fan",
+                       "   Lenovo CPU Fan N/A");
+    }
     break;
   }
   case 2: {
@@ -1275,6 +1314,68 @@ static bool read_load_average(double load_avg[3]) {
 #define HOST_POWER_PROBE_GIVE_UP_AFTER 4u
 #define HOST_POWER_PROBE_RETRY_PERIOD 256u
 
+#ifdef HOST_METRICS_LINUX
+static bool host_is_lenovo(void) {
+  char *vendor = read_text_file(HOST_DMI_SYS_VENDOR_PATH, HOST_POWER_NAME_READ_LIMIT);
+  if (!vendor)
+    return false;
+  for (char *cursor = vendor; *cursor; ++cursor)
+    if (*cursor >= 'a' && *cursor <= 'z')
+      *cursor = (char)(*cursor - 'a' + 'A');
+  const bool lenovo = strstr(vendor, "LENOVO") != NULL;
+  free(vendor);
+  return lenovo;
+}
+
+static bool read_lenovo_fan_rpm_file(const char *path, unsigned *rpm) {
+  char *content = read_text_file(path, HOST_POWER_FILE_READ_LIMIT);
+  if (!content)
+    return false;
+  bool parsed = host_lenovo_fan_parse_rpm_text(content, rpm);
+  free(content);
+  return parsed;
+}
+
+static bool helper_lenovo_cpu_fan(unsigned *rpm) {
+  const char *path = getenv("NVTOP_LENOVO_CPU_FAN_RPM_PATH");
+  if (!path || !path[0])
+    path = HOST_LENOVO_FAN_HELPER_PATH;
+  struct stat attributes;
+  if (stat(path, &attributes) != 0)
+    return false;
+  const time_t now = time(NULL);
+  if (now != (time_t)-1 && attributes.st_mtime <= now &&
+      now - attributes.st_mtime > HOST_LENOVO_FAN_HELPER_MAX_AGE_SECONDS)
+    return false;
+  return read_lenovo_fan_rpm_file(path, rpm);
+}
+#else
+static bool host_is_lenovo(void) { return false; }
+static bool helper_lenovo_cpu_fan(unsigned *rpm) { (void)rpm; return false; }
+#endif
+
+static void update_lenovo_cpu_fan(struct host_metrics_state *state) {
+  state->lenovo_fan_valid = false;
+  if (!state->lenovo_fan_support_probed) {
+    state->lenovo_fan_supported = host_is_lenovo();
+    state->lenovo_fan_support_probed = true;
+  }
+  if (!state->lenovo_fan_supported)
+    return;
+  if (state->lenovo_fan_probe_failures >= HOST_LENOVO_FAN_PROBE_GIVE_UP_AFTER &&
+      (state->sample_count % HOST_LENOVO_FAN_PROBE_RETRY_PERIOD) != 0u)
+    return;
+  unsigned rpm = 0;
+  if (helper_lenovo_cpu_fan(&rpm)) {
+    state->lenovo_fan_rpm = rpm;
+    state->lenovo_fan_valid = true;
+    state->lenovo_fan_probe_failures = 0u;
+    return;
+  }
+  if (state->lenovo_fan_probe_failures < HOST_LENOVO_FAN_PROBE_GIVE_UP_AFTER)
+    ++state->lenovo_fan_probe_failures;
+}
+
 enum host_power_source {
   host_power_source_none = 0,
   host_power_source_energy,  // A cumulative energy counter: two samples make a power
@@ -1425,7 +1526,7 @@ static bool hwmon_package_power(double *watts, char *source, size_t source_size)
       if (!parsed)
         continue;
       *watts = value;
-      snprintf(source, source_size, "%s/%s", chip_dir, name);
+      snprintf(source, source_size, "%s", input_path);
       found = true;
       break;
     }
@@ -1647,6 +1748,7 @@ bool host_metrics_update(struct host_metrics_state *state) {
   // The package power is its own sample: it is not a chart curve, and it is
   // read from its own sources, at the same rhythm as everything else.
   update_package_power(state);
+  update_lenovo_cpu_fan(state);
 
   double load_avg[3];
   if (read_load_average(load_avg)) {

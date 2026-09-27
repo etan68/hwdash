@@ -174,7 +174,7 @@ Above its chart, the CPU device shows a three row detail block, as dense as a GP
 
 ```
 Device CPU [<model>]  CORES <physical>C/<logical>T
-CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>   POWER <package watts>W
+CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>   POWER <package watts>W   Lenovo CPU Fan <rpm> RPM
 RAM  <used>/<total> GiB  <percent>%   AVAIL <available GiB>   SWAP <used>/<total> GiB
 ```
 
@@ -184,11 +184,11 @@ logical threads), the average frequency from the ``cpuinfo_cur_freq`` / ``scalin
 entries, the load averages from ``/proc/loadavg``, and the swap from ``/proc/meminfo``; everything
 refreshes with the normal update interval. Missing or malformed fields show ``N/A``. When the
 terminal is too narrow, the block shortens in that order: swap, then the 15m and 5m load averages,
-then the available memory, then the package power, then the frequency and the rest of the static CPU
-information; the CPU utilization and the memory used/total/percentage stay as long as the block
+then the available memory, then the fan speed, package power, frequency and the rest of the static
+CPU information; the CPU utilization and the memory used/total/percentage stay as long as the block
 itself fits, and an overlong CPU model is truncated rather than overflowing the terminal. The field
-titles of the block - ``Device CPU``, ``CORES``, ``CPU``, ``FREQ``, ``LOAD``, ``POWER``, ``RAM``,
-``AVAIL``, ``SWAP`` - are highlighted with the same color as the titles of a GPU detail block, and
+titles of the block - ``Device CPU``, ``CORES``, ``CPU``, ``FREQ``, ``LOAD``, ``POWER``, ``Lenovo CPU Fan``,
+``RAM``, ``AVAIL``, ``SWAP`` - are highlighted with the same color as the titles of a GPU detail block, and
 the values keep the normal terminal color; a title a narrow terminal dropped is not highlighted.
 CPU temperature is not part of this block, and the power is the one of the whole CPU package: one
 power for now, neither a per core breakdown nor a curve of the chart.
@@ -217,6 +217,31 @@ wrap adding up to a power no package draws, a zone that disappears, a malformed 
 with no such interface all show ``POWER N/A``, never a fabricated ``POWER 0.0W``. On a machine whose
 kernel exposes no readable energy counter to a normal user, ``POWER N/A`` is therefore the expected
 display.
+
+On a machine whose DMI system vendor is Lenovo, the block also shows ``Lenovo CPU Fan``. This fork
+installs ``nvtop-lenovo-cpu-fan-helper.service`` for that field. The service loads the kernel's
+``ec_sys`` module with its default read-only setting, reads the Lenovo EC register pair with a
+high-low-high consistency check, and publishes only the checked RPM value to
+``/run/nvtop/lenovo-cpu-fan-rpm``. nvtop itself remains unprivileged. The helper refuses the EC
+offsets on a non-Lenovo computer, never enables EC writes, and does not invent a fan percentage
+because this source contains RPM only. Non-Lenovo machines do not show this field.
+
+If the firmware exposes no active ACPI EC device to ``ec_sys``, the helper falls back to
+``/dev/port`` and performs the same ``RD_EC`` command/address handshake as P3FanMonitor. The port
+writes are part of selecting a register for reading; there is no ``WR_EC`` command and no EC RAM
+write path in the helper.
+
+Enable it once after installing nvtop:
+
+```console
+sudo systemctl daemon-reload
+sudo systemctl enable --now nvtop-lenovo-cpu-fan-helper.service
+systemctl status nvtop-lenovo-cpu-fan-helper.service
+cat /run/nvtop/lenovo-cpu-fan-rpm
+```
+
+If the service stops or the EC sample is incoherent, its output disappears; nvtop also rejects a
+stale output file and displays ``Lenovo CPU Fan N/A``.
 
 Other operating systems keep building; they simply have no host metrics, and the lines default to
 disabled there. If they are enabled by hand on such a platform, the detail block shows ``N/A``

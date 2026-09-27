@@ -213,6 +213,20 @@ target_link_libraries(nvtop
 install(TARGETS nvtop
   RUNTIME DESTINATION bin)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  include(GNUInstallDirs)
+  add_executable(nvtop-lenovo-cpu-fan-helper lenovo_cpu_fan_helper.c)
+  set_property(TARGET nvtop-lenovo-cpu-fan-helper PROPERTY C_STANDARD 11)
+  target_compile_definitions(nvtop-lenovo-cpu-fan-helper PRIVATE _GNU_SOURCE)
+  install(TARGETS nvtop-lenovo-cpu-fan-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+  configure_file(
+    "${PROJECT_SOURCE_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service.in"
+    "${PROJECT_BINARY_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service"
+    @ONLY)
+  install(FILES "${PROJECT_BINARY_DIR}/systemd/nvtop-lenovo-cpu-fan-helper.service"
+    DESTINATION lib/systemd/system)
+endif()
+
 include(compile-flags-helpers)
 include(${PROJECT_SOURCE_DIR}/cmake/optimization_flags.cmake)
 

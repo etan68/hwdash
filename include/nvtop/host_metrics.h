@@ -76,7 +76,7 @@ struct host_power_sample {
 #define HOST_POWER_MAX_PLAUSIBLE_WATTS 1000.
 
 // Longest identity the probe gives a power source: a sysfs path.
-#define HOST_POWER_SOURCE_MAX_LENGTH 128u
+#define HOST_POWER_SOURCE_MAX_LENGTH 256u
 
 // Static identity of the whole host CPU. One package and one CPU is the
 // targeted case: the machine has a single model, a single core count and a
@@ -122,6 +122,13 @@ struct host_metrics_state {
   // unknown power reads N/A in the detail block, never 0W.
   double package_power_watts;
   bool power_valid;
+  // Lenovo CPU fan speed published by the small EC helper. The field is shown
+  // only on machines whose DMI system vendor is Lenovo.
+  unsigned lenovo_fan_rpm;
+  bool lenovo_fan_valid;
+  bool lenovo_fan_supported;
+  bool lenovo_fan_support_probed;
+  unsigned lenovo_fan_probe_failures;
   // Previous sample of the package energy counter and the monotonic time it was
   // taken at: the pair the watts are computed from.
   struct host_power_sample last_power;
@@ -245,17 +252,21 @@ bool host_power_watts_between(const struct host_power_sample *previous, const st
 // sensor that reads zero, or a negative or absurd value, reports nothing.
 bool host_power_parse_hwmon_input_text(const char *text, double *watts);
 
+// Parse one fan*_input or helper output. Zero is a real stopped-fan reading;
+// absurd, signed or otherwise malformed readings are unavailable.
+bool host_lenovo_fan_parse_rpm_text(const char *text, unsigned *rpm);
+
 // The CPU detail block displayed above the combined CPU/RAM chart, with the
 // same density as a GPU detail block:
 //   line 0: Device CPU [<model>]  CORES <physical>C/<logical>T
-//   line 1: CPU  <util>%   FREQ <average>   LOAD <1m> / <5m> / <15m>   POWER <watts>W
+//   line 1: CPU  <util>%   FREQ <average>   LOAD <1m> / <5m> / <15m>   POWER <watts>W   Lenovo CPU Fan <rpm> RPM
 //   line 2: RAM  <used>/<total> GiB  <percent>%   AVAIL <avail>   SWAP <used>/<total> GiB
 #define HOST_DETAIL_LINE_COUNT 3u
 
 // Format one line of the CPU detail block for a block `width` columns wide.
 // The fields that do not fit are dropped in the responsive order: the swap
 // first, then the 5 and 15 minute load averages, then the available memory,
-// then the package power, then the static CPU information. The CPU utilization
+// then the Lenovo fan speed, package power and static CPU information. The CPU utilization
 // and the memory usage are never dropped and an overlong model name is
 // truncated. Like snprintf, the return value is the length the line would have
 // needed at its fullest.

@@ -1,0 +1,20 @@
+[Unit]
+Description=Publish Lenovo CPU fan RPM for nvtop
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/modprobe ec_sys
+ExecStart=@CMAKE_INSTALL_FULL_LIBEXECDIR@/nvtop-lenovo-cpu-fan-helper
+RuntimeDirectory=nvtop
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/nvtop
+
+[Install]
+WantedBy=multi-user.target

@@ -618,7 +618,7 @@ TEST(HostPackagePower, SourcesAreFoundByTheNamesTheyDeclare) {
 
 // The package power field of the CPU detail block, and the title colors the
 // interface draws from the reported spans.
-TEST(HostDetailBlock, PackagePowerFieldAndTitles) {
+TEST(HostDetailBlock, PackagePowerFanFieldsAndTitles) {
   host_metrics_state state = {};
   char line[512] = {};
   host_detail_field fields[HOST_DETAIL_FIELD_MAX] = {};
@@ -627,8 +627,12 @@ TEST(HostDetailBlock, PackagePowerFieldAndTitles) {
   state.cpu_percent = 12.5;
   state.power_valid = true;
   state.package_power_watts = 15.5;
+  state.lenovo_fan_supported = true;
+  state.lenovo_fan_valid = true;
+  state.lenovo_fan_rpm = 1834u;
   EXPECT_GT(host_metrics_format_detail_line(&state, 1u, 162u, line, sizeof(line)), 0u);
   EXPECT_NE(std::strstr(line, "POWER 15.5W"), nullptr);
+  EXPECT_NE(std::strstr(line, "Lenovo CPU Fan 1834 RPM"), nullptr);
 
   // An unknown power reads N/A, never the 0W the zeroed state would suggest.
   state.power_valid = false;
@@ -639,7 +643,7 @@ TEST(HostDetailBlock, PackagePowerFieldAndTitles) {
 
   // The titles of the line, with the columns the interface colors cyan.
   host_metrics_format_detail_line_fields(&state, 1u, 162u, line, sizeof(line), fields, HOST_DETAIL_FIELD_MAX);
-  const char *expected[] = {"CPU", "FREQ", "LOAD", "POWER"};
+  const char *expected[] = {"CPU", "FREQ", "LOAD", "POWER", "Lenovo CPU Fan"};
   unsigned reported = 0u;
   for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
     if (fields[i].length == 0u)
@@ -652,7 +656,7 @@ TEST(HostDetailBlock, PackagePowerFieldAndTitles) {
     EXPECT_EQ(title, expected[reported]) << title;
     ++reported;
   }
-  EXPECT_EQ(reported, 4u);
+  EXPECT_EQ(reported, 5u);
 
   // A narrow line drops the power: a title that is not in the line is not
   // reported, so it cannot be colored over a value.
