@@ -1162,14 +1162,11 @@ static void draw_devices(struct list_head *devices, struct nvtop_interface *inte
         draw_percentage_meter(decode_win, "DEC", rate, buff);
     }
     if (GPUINFO_DYNAMIC_FIELD_VALID(&device->dynamic_info, gpu_util_rate)) {
-      if (GPUINFO_DYNAMIC_FIELD_VALID(&device->dynamic_info, effective_load_rate)) {
-        snprintf(buff, 1024, "%u%%(eff %u%%)", device->dynamic_info.gpu_util_rate,
-                 device->dynamic_info.effective_load_rate);
-        draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), device->dynamic_info.gpu_util_rate, buff);
-      } else {
-        snprintf(buff, 1024, "%u%%", device->dynamic_info.gpu_util_rate);
-        draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), device->dynamic_info.gpu_util_rate, buff);
-      }
+      // The compact device meter shows the hardware-reported GPU utilization
+      // only. Effective load is a derived utilization-by-power metric and
+      // remains available as an optional chart line in the setup screen.
+      snprintf(buff, 1024, "%u%%", device->dynamic_info.gpu_util_rate);
+      draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), device->dynamic_info.gpu_util_rate, buff);
     } else {
       snprintf(buff, 1024, "N/A");
       draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), 0, buff);
