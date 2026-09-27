@@ -17,403 +17,351 @@ static unsigned min_rows_taken_by_process(unsigned rows, unsigned num_devices) {
 }
 
 static const unsigned cols_needed_box_drawing = 5;
-static const unsigned min_plot_rows = 7;
+
+// The narrowest chart that can draw that many percentage lines.
 static unsigned min_plot_cols(unsigned num_data_info_to_plot) {
   return cols_needed_box_drawing + 10 * num_data_info_to_plot;
 }
 
-// If true, returns two plot indices that yields to the lowest number of info in
-// a plot when merged.
-// In case of ties, plots at the end of the list are prioritized.
-static bool who_to_merge(unsigned max_merge_size, unsigned plot_count, unsigned num_info_per_plot[plot_count],
-                         unsigned merge_ids[2]) {
-  unsigned smallest_merge = UINT_MAX;
-  for (unsigned notEmptyPlotIdx = plot_count - 1; notEmptyPlotIdx < plot_count; --notEmptyPlotIdx) {
-    if (!num_info_per_plot[notEmptyPlotIdx])
-      continue;
-    // We want to preserve the devices order when merging, hence we only look
-    // for the closest non empty neighbor for each plot.
-    unsigned merge_with = notEmptyPlotIdx;
-    for (unsigned j = notEmptyPlotIdx - 1; j < notEmptyPlotIdx; --j) {
-      if (num_info_per_plot[j]) {
-        merge_with = j;
-        break;
-      }
-    }
-    unsigned num_info_merged = num_info_per_plot[notEmptyPlotIdx] + num_info_per_plot[merge_with];
-    if (merge_with < notEmptyPlotIdx && num_info_merged <= max_merge_size && num_info_merged < smallest_merge) {
-      smallest_merge = num_info_merged;
-      merge_ids[0] = merge_with;
-      merge_ids[1] = notEmptyPlotIdx;
-    }
+// The monitoring screen, section by section //////////////////////////////////
+//
+// Everything the interface draws is a section, and the sections follow each
+// other from the top of the terminal to the bottom, the keyboard shortcut bar
+// excepted, which stays anchored to the last row of the terminal:
+//
+//   +-----------------------------------------------------+
+//   | Device CPU [model name]            CORES 8C/16T     | <- CPU detail block
+//   | CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35 |
+//   | RAM  3.21/31.26 GiB 10.3%  AVAIL 28.05 GiB  SWAP .. |
+//   | [ combined CPU/RAM chart ]                          | <- CPU chart
+//   +-----------------------------------------------------+
+//                                                         <- one blank gap row
+//   | Device 0 [GPU name] ...                             | <- GPU0 detail block
+//   | [ GPU0 chart ]                                      | <- GPU0 chart
+//   +-----------------------------------------------------+
+//                                                         <- one blank gap row
+//   | Device 1 [GPU name] ...                             |
+//   | [ GPU1 chart ]                                      |
+//   ...
+//   | process list                                        |
+//   | flexible unused space                              |
+//   | keyboard shortcuts (last terminal row)              |
+//   +-----------------------------------------------------+
+//
+// Every device is a section of its own, the whole host CPU like the GPUs: one
+// fixed height detail block, right above one chart of its own that draws that
+// device only, and one blank row after the whole section. Two devices never
+// share a chart and never share a section.
+//
+// The terminal is not always tall enough to give a chart of at least the
+// minimum chart height to every device. Then whole sections are left out, in a
+// fixed order: the CPU device first, then the GPU devices from the highest
+// index to the lowest, always recomputing the shared chart height in between. A
+// device that is left out has no header, no chart and no chart to be mapped to,
+// so that a header never introduces somebody else's chart.
+
+const char *layout_section_kind_name(enum layout_section_kind kind) {
+  switch (kind) {
+  case layout_section_host_device:
+    return "cpu-device";
+  case layout_section_gpu_device:
+    return "gpu-device";
+  case layout_section_processes:
+    return "processes";
+  case layout_section_unused:
+    return "unused";
+  case layout_section_shortcut:
+    return "shortcut";
+  case layout_section_kind_count:
+    break;
   }
-  return smallest_merge != UINT_MAX;
+  return "unknown";
 }
 
-static bool move_plot_to_stack(unsigned stack_max_cols, unsigned plot_id, unsigned destination_stack,
-                               unsigned plot_count, unsigned stack_count, const unsigned num_info_per_plot[plot_count],
-                               unsigned cols_allocated_in_stacks[stack_count], unsigned plot_in_stack[plot_count]) {
-  if (plot_in_stack[plot_id] == destination_stack)
-    return false;
-  unsigned cols_used_by_plot_id = min_plot_cols(num_info_per_plot[plot_id]);
-  unsigned cols_after_merge = cols_allocated_in_stacks[destination_stack] + cols_used_by_plot_id;
-  if (cols_after_merge > stack_max_cols) {
-    return false;
-  } else {
-    cols_allocated_in_stacks[plot_in_stack[plot_id]] -= cols_used_by_plot_id;
-    cols_allocated_in_stacks[destination_stack] += cols_used_by_plot_id;
-    plot_in_stack[plot_id] = destination_stack;
-    return true;
-  }
+static unsigned saturating_subtraction(unsigned value, unsigned subtraction) {
+  return value > subtraction ? value - subtraction : 0;
 }
 
-static unsigned info_in_plot(unsigned plot_id, unsigned devices_count, const unsigned map_device_to_plot[devices_count],
-                             const nvtop_interface_gpu_opts gpuOpts[devices_count]) {
-  unsigned sum = 0;
-  for (unsigned dev_id = 0; dev_id < devices_count; ++dev_id) {
-    if (map_device_to_plot[dev_id] == plot_id)
-      sum += plot_count_draw_info(gpuOpts[dev_id].to_draw);
-  }
-  assert(sum > 0);
-  return sum;
+// The bounding box of two windows, ignoring the empty ones.
+static struct window_position bounding_box(struct window_position box, struct window_position added) {
+  if (added.sizeX == 0 || added.sizeY == 0)
+    return box;
+  if (box.sizeX == 0 || box.sizeY == 0)
+    return added;
+  unsigned left = min(box.posX, added.posX);
+  unsigned right = max(box.posX + box.sizeX, added.posX + added.sizeX);
+  unsigned top = min(box.posY, added.posY);
+  unsigned bottom = max(box.posY + box.sizeY, added.posY + added.sizeY);
+  return (struct window_position){left, top, right - left, bottom - top};
 }
 
-static unsigned cols_used_by_stack(unsigned stack_id, unsigned plot_count, const unsigned num_info_per_plot[plot_count],
-                                   const unsigned plot_in_stack[plot_count]) {
-  unsigned sum = 0;
-  for (unsigned plot_id = 0; plot_id < plot_count; ++plot_id) {
-    if (plot_in_stack[plot_id] == stack_id)
-      sum += min_plot_cols(num_info_per_plot[plot_id]);
-  }
-  return sum;
+// The detail block of a device that owns a section of its own: it is alone on
+// its row, so it starts one column in when the terminal is wider than the
+// block, the way a row of device headers always did.
+static struct window_position device_detail_position(unsigned cols, unsigned device_header_cols,
+                                                     unsigned device_header_rows, unsigned pos_y) {
+  unsigned pos_x = cols > device_header_cols ? 1u : 0u;
+  return (struct window_position){pos_x, pos_y, device_header_cols, device_header_rows};
 }
 
-static unsigned size_differences_between_stacks(unsigned plot_count, unsigned stack_count,
-                                                unsigned cols_allocated_in_stacks[plot_count]) {
-  unsigned sum = 0;
-  for (unsigned i = 0; i < stack_count; ++i) {
-    for (unsigned j = i + 1; j < stack_count; ++j) {
-      if (cols_allocated_in_stacks[i] > cols_allocated_in_stacks[j]) {
-        sum += cols_allocated_in_stacks[i] - cols_allocated_in_stacks[j];
-      } else {
-        sum += cols_allocated_in_stacks[j] - cols_allocated_in_stacks[i];
-      }
-    }
-  }
-  return sum;
+// The position of a chart that owns a whole chart row, as wide as the terminal
+// allows, its drawing columns shared out between the lines it draws. Every
+// chart of the screen is alone on its row and uses this one calculation, the
+// combined CPU/RAM chart like the GPU charts.
+static struct window_position full_row_chart_position(unsigned cols, unsigned num_lines, unsigned pos_y,
+                                                      unsigned height) {
+  if (num_lines == 0 || num_lines > MAX_LINES_PER_PLOT)
+    return (struct window_position){0, 0, 0, 0};
+  unsigned cols_for_line_drawing = saturating_subtraction(cols, cols_needed_box_drawing);
+  unsigned max_cols = cols_needed_box_drawing + cols_for_line_drawing * num_lines / num_lines;
+  unsigned plot_cols = max_cols - (max_cols - cols_needed_box_drawing) % num_lines;
+  return (struct window_position){0, pos_y, plot_cols, height};
 }
 
-static void preliminary_plot_positioning(unsigned rows_for_plots, unsigned plot_total_cols, unsigned devices_count,
-                                         const nvtop_interface_gpu_opts gpuOpts[devices_count],
-                                         unsigned map_device_to_plot[devices_count],
-                                         unsigned plot_in_stack[devices_count], unsigned *num_plots,
-                                         unsigned *plot_stack_count) {
+// How many percentage lines the chart of a device draws. A device that draws
+// nothing has no chart, and therefore no header either.
+static unsigned device_plot_lines(const nvtop_interface_gpu_opts *gpu_opts, unsigned dev) {
+  if (!gpu_opts)
+    return 0;
+  return plot_count_draw_info(gpu_opts[dev].to_draw);
+}
 
-  // Used to handle the merging process
-  unsigned num_info_per_plot[MAX_CHARTS];
+static struct layout_section make_section(enum layout_section_kind kind, unsigned device_first, unsigned device_count,
+                                          unsigned plot_first, unsigned plot_count, struct window_position detail,
+                                          struct window_position chart) {
+  struct layout_section section;
+  section.kind = kind;
+  section.device_first = device_first;
+  section.device_count = device_count;
+  section.plot_first = plot_first;
+  section.plot_count = plot_count;
+  section.detail = detail;
+  section.chart = chart;
+  section.area = bounding_box(detail, chart);
+  return section;
+}
 
-  bool plot_anything = false;
+void compute_monitoring_layout(const struct layout_request *request, struct layout_result *result) {
+  if (!request || !result)
+    return;
+
+  const unsigned devices_count = min(request->devices_count, MAX_CHARTS);
+  const unsigned rows = request->rows;
+  const unsigned cols = request->cols;
+  const unsigned device_header_rows = request->device_header_rows;
+  const unsigned device_header_cols = request->device_header_cols;
+  const unsigned host_lines = min(request->host_chart_lines, (unsigned)MAX_LINES_PER_PLOT);
+  const unsigned host_detail_rows = request->host_detail_rows;
+  const bool processes_requested =
+      process_field_displayed_count(request->process_displayed) > 0 && !request->hide_processes;
+
+  // Keep the caller arrays across the reset of the result.
+  struct window_position *device_positions = result->device_positions;
+  struct layout_section *given_sections = result->sections;
+  struct window_position *plot_positions = result->plot_positions;
+  unsigned *map_device_to_plot = result->map_device_to_plot;
+  memset(result, 0, sizeof(*result));
+  result->device_positions = device_positions;
+  result->sections = given_sections;
+  result->plot_positions = plot_positions;
+  result->map_device_to_plot = map_device_to_plot;
+  if (plot_positions) {
+    for (unsigned i = 0; i < MAX_CHARTS; ++i)
+      plot_positions[i] = (struct window_position){0, 0, 0, 0};
+  }
   for (unsigned i = 0; i < devices_count; ++i) {
-    num_info_per_plot[i] = plot_count_draw_info(gpuOpts[i].to_draw);
-    map_device_to_plot[i] = i;
-    if (num_info_per_plot[i])
-      plot_anything = true;
+    // No device has a chart until the layout gives it one, and a device
+    // without a chart never gets a header either.
+    if (map_device_to_plot)
+      map_device_to_plot[i] = MAX_CHARTS;
+    if (device_positions)
+      device_positions[i] = (struct window_position){0, 0, 0, 0};
+  }
+  struct layout_section sections[MAX_LAYOUT_SECTIONS];
+  unsigned section_count = 0;
+
+  // The process list takes the room the layout has always given it, and the
+  // shortcut bar the last row of the terminal, which is the row right after the
+  // space the layout was given.
+  unsigned process_rows = processes_requested ? min_rows_taken_by_process(rows, devices_count) : 0;
+  // A terminal that cannot hold the device detail blocks and a process list at
+  // once shrinks the process list down to what the detail blocks leave, and
+  // shows no process list at all when there is not even room for that.
+  const unsigned all_detail_rows = devices_count * device_header_rows;
+  if (processes_requested && rows < all_detail_rows + process_rows)
+    process_rows = rows >= all_detail_rows + 2u ? rows - all_detail_rows : 0u;
+
+  // ---------------------------------------------------------------------------
+  // Which devices make a section: the visible devices are an ordered prefix
+  // ---------------------------------------------------------------------------
+  // A device is left out, and with it every device after it, when its own chart
+  // cannot be as wide as the lines it draws need: the chart of a device is
+  // alone on its row, so no device is ever made room for by shrinking another.
+  const bool host_requested = host_lines > 0 && host_detail_rows > 0;
+  unsigned visible_gpus = 0;
+  for (; visible_gpus < devices_count; ++visible_gpus) {
+    unsigned lines = device_plot_lines(request->gpu_opts, visible_gpus);
+    if (lines == 0 || lines > MAX_LINES_PER_PLOT || cols < min_plot_cols(lines))
+      break;
   }
 
-  // Get the most packed configuration possible with one chart per device if
-  // possible.
-  // If there is not enough place, merge the charts and retry.
-  unsigned num_plot_stacks = 0;
-  bool search_a_window_configuration = plot_anything && rows_for_plots >= min_plot_rows;
-  while (search_a_window_configuration) {
-    search_a_window_configuration = false;
-    unsigned plot_id = 0;
-    num_plot_stacks = 1;
-    unsigned cols_used_in_stack = 0;
-    unsigned rows_left_to_allocate = rows_for_plots - min_plot_rows;
-
-    for (unsigned i = 0; i < devices_count; ++i) {
-      unsigned num_info_for_this_plot = num_info_per_plot[i];
-      if (num_info_for_this_plot == 0)
-        continue;
-
-      unsigned cols_this_plot = min_plot_cols(num_info_for_this_plot);
-      // If there is enough horizontal space left, allocate side by side
-      if (plot_total_cols >= cols_this_plot + cols_used_in_stack) {
-        cols_used_in_stack += cols_this_plot;
-        plot_in_stack[plot_id] = num_plot_stacks - 1;
-        plot_id++;
-      } else {
-        // This plot is too wide for an empty stack, abort
-        if (cols_used_in_stack == 0) {
-          num_plot_stacks = 0;
-          break;
-        }
-        // Else allocate a new stack and retry
-        if (rows_left_to_allocate >= min_plot_rows) {
-          rows_left_to_allocate -= min_plot_rows;
-          num_plot_stacks++;
-          cols_used_in_stack = 0;
-          i--;
-        } else { // Not enough space for a stack: retry and merge one more
-          unsigned to_merge[2];
-          if (who_to_merge(MAX_LINES_PER_PLOT, devices_count, num_info_per_plot, to_merge)) {
-            num_info_per_plot[to_merge[0]] += num_info_per_plot[to_merge[1]];
-            num_info_per_plot[to_merge[1]] = 0;
-            unsigned oldLocation = map_device_to_plot[to_merge[1]];
-            for (unsigned devId = 0; devId < devices_count; ++devId) {
-              if (map_device_to_plot[devId] == oldLocation)
-                map_device_to_plot[devId] = map_device_to_plot[to_merge[0]];
-            }
-            search_a_window_configuration = true;
-          } else { // No merge left
-            num_plot_stacks = 0;
-          }
-          break;
-        }
-      }
+  // ---------------------------------------------------------------------------
+  // How tall the charts are: every visible chart shares the same height
+  // ---------------------------------------------------------------------------
+  // The rows the charts are left with are the rows the terminal has once the
+  // fixed height detail blocks, the blank row after each device section and the
+  // process list are taken. They are shared equally between the CPU chart and
+  // the charts of the visible GPU devices. When that leaves a chart below the
+  // minimum chart height, the CPU device goes first, then the GPU devices from
+  // the highest index to the lowest, and the height is computed again.
+  bool show_host = host_requested && cols >= min_plot_cols(host_lines);
+  unsigned show_gpus = visible_gpus;
+  unsigned chart_rows = 0;
+  unsigned rows_left_for_charts = 0;
+  for (;;) {
+    const unsigned num_charts = (show_host ? 1u : 0u) + show_gpus;
+    // One blank row after each device section, when another top level section
+    // follows it. With no process list, the last device section is the last
+    // section of the screen and keeps no gap row.
+    const unsigned gap_rows = num_charts > 0 ? (process_rows > 0 ? num_charts : num_charts - 1u) : 0u;
+    const unsigned fixed_rows = gap_rows + (show_host ? host_detail_rows : 0u) + show_gpus * device_header_rows;
+    rows_left_for_charts = saturating_subtraction(rows, fixed_rows + process_rows);
+    chart_rows = num_charts > 0 ? rows_left_for_charts / num_charts : 0u;
+    if (process_rows > 0 && chart_rows > LAYOUT_MAX_CHART_ROWS_WITH_PROCESS)
+      chart_rows = LAYOUT_MAX_CHART_ROWS_WITH_PROCESS;
+    if (num_charts == 0 || chart_rows >= LAYOUT_MIN_CHART_ROWS)
+      break;
+    if (show_host) {
+      show_host = false;
+      continue;
     }
+    if (show_gpus == 0)
+      break;
+    --show_gpus;
+  }
+  const unsigned num_plots = show_gpus;
+  const unsigned num_charts = (show_host ? 1u : 0u) + show_gpus;
+  // The rows the charts could not use go to the process list, the way the chart
+  // area always gave them away, so that no blank hole opens up above it. With
+  // no process list they become the unused space above the shortcut bar.
+  const unsigned chart_row_leftover = saturating_subtraction(rows_left_for_charts, chart_rows * num_charts);
+  if (process_rows > 0)
+    process_rows += chart_row_leftover;
+  result->num_plots = num_plots;
+  result->chart_rows = chart_rows;
+  const bool has_process = process_rows > 0;
+
+  // ---------------------------------------------------------------------------
+  // The sections laid out, in order, from the top of the terminal to the bottom
+  // ---------------------------------------------------------------------------
+  const unsigned device_sections = (show_host ? 1u : 0u) + show_gpus;
+  unsigned emitted_sections = 0;
+  unsigned pos_y = 0;
+  unsigned first_detail_bottom = 0;
+
+  if (show_host) {
+    struct window_position detail = {0, pos_y, cols, host_detail_rows};
+    pos_y += host_detail_rows;
+    first_detail_bottom = pos_y;
+    struct window_position chart = full_row_chart_position(cols, host_lines, pos_y, chart_rows);
+    pos_y += chart_rows;
+    result->host_detail = detail;
+    result->host_chart = chart;
+    if (section_count < MAX_LAYOUT_SECTIONS)
+      sections[section_count++] = make_section(layout_section_host_device, 0, 0, 0, 0, detail, chart);
+    ++emitted_sections;
+    if (emitted_sections < device_sections || has_process)
+      pos_y += LAYOUT_SECTION_GAP_ROWS;
   }
 
-  // Compute the number of plots, the mapping and the size
-  *num_plots = 0;
-  *plot_stack_count = num_plot_stacks;
-  if (num_plot_stacks > 0) {
-    // Move non-empty plots over empty ones caused by merges
-    for (unsigned idx = 0; idx < devices_count; ++idx) {
-      if (!num_info_per_plot[idx]) {
-        // Search next non-empty and move it here
-        for (unsigned nextIdx = idx + 1; nextIdx < devices_count; ++nextIdx) {
-          if (num_info_per_plot[nextIdx]) {
-            num_info_per_plot[idx] = num_info_per_plot[nextIdx];
-            num_info_per_plot[nextIdx] = 0;
-            for (unsigned devId = 0; devId < devices_count; ++devId) {
-              if (map_device_to_plot[devId] == nextIdx)
-                map_device_to_plot[devId] = idx;
-            }
-            (*num_plots)++;
-            break;
-          }
-        }
-      } else {
-        (*num_plots)++;
-      }
-    }
+  for (unsigned dev = 0; dev < show_gpus; ++dev) {
+    // The device is alone in its section: its detail block is the whole detail
+    // subsection, right above the chart that draws it and nothing else.
+    struct window_position detail = device_detail_position(cols, device_header_cols, device_header_rows, pos_y);
+    if (device_positions)
+      device_positions[dev] = detail;
+    pos_y += device_header_rows;
+    if (first_detail_bottom == 0)
+      first_detail_bottom = pos_y;
+    struct window_position chart =
+        full_row_chart_position(cols, device_plot_lines(request->gpu_opts, dev), pos_y, chart_rows);
+    if (plot_positions)
+      plot_positions[dev] = chart;
+    if (map_device_to_plot)
+      map_device_to_plot[dev] = dev;
+    pos_y += chart_rows;
+    if (section_count < MAX_LAYOUT_SECTIONS)
+      sections[section_count++] = make_section(layout_section_gpu_device, dev, 1u, dev, 1u, detail, chart);
+    ++emitted_sections;
+    if (emitted_sections < device_sections || has_process)
+      pos_y += LAYOUT_SECTION_GAP_ROWS;
   }
+
+  // The process list, right below the last visible device section, the blank
+  // separating row included in the sections above.
+  result->process = (struct window_position){0, rows - min(process_rows, rows), cols, min(process_rows, rows)};
+  if (result->process.sizeY > 0 && section_count < MAX_LAYOUT_SECTIONS)
+    sections[section_count++] =
+        make_section(layout_section_processes, 0, 0, 0, 0, (struct window_position){0, 0, 0, 0}, result->process);
+
+  // The space the charts could not use, right above the shortcut bar.
+  unsigned unused_top = max(pos_y, result->process.posY + result->process.sizeY);
+  unsigned unused_rows = saturating_subtraction(rows, unused_top);
+  if (unused_rows > 0 && section_count < MAX_LAYOUT_SECTIONS)
+    sections[section_count++] = make_section(layout_section_unused, 0, 0, 0, 0, (struct window_position){0, 0, 0, 0},
+                                             (struct window_position){0, unused_top, cols, unused_rows});
+
+  // The keyboard shortcut bar, anchored to the last row of the terminal, which
+  // is the row right after the space the layout was given.
+  result->shortcut = (struct window_position){0, rows, cols, 1};
+  if (section_count < MAX_LAYOUT_SECTIONS)
+    sections[section_count++] =
+        make_section(layout_section_shortcut, 0, 0, 0, 0, (struct window_position){0, 0, 0, 0}, result->shortcut);
+
+  // The setup screen is drawn over everything but the first detail block, the
+  // way it used to be drawn over everything but the device headers.
+  unsigned setup_pos_y = first_detail_bottom < rows ? first_detail_bottom : 0;
+  result->setup = (struct window_position){0, setup_pos_y, cols, rows - setup_pos_y};
+
+  if (given_sections) {
+    for (unsigned i = 0; i < section_count; ++i)
+      given_sections[i] = sections[i];
+  }
+  result->num_sections = section_count;
 }
 
-static void balance_info_on_stacks_preserving_plot_order(unsigned stack_max_cols, unsigned stack_count,
-                                                         unsigned plot_count, unsigned num_info_per_plot[plot_count],
-                                                         unsigned cols_allocated_in_stacks[stack_count],
-                                                         unsigned plot_in_stack[plot_count]) {
-  if (stack_count > plot_count) {
-    stack_count = plot_count;
-  }
-  unsigned moving_plot_id = plot_count - 1;
-  while (moving_plot_id < plot_count) {
-    unsigned to_stack = plot_in_stack[moving_plot_id] + 1;
-    if (to_stack < stack_count) {
-      unsigned diff_sum_before = size_differences_between_stacks(plot_count, stack_count, cols_allocated_in_stacks);
-      unsigned stack_before = plot_in_stack[moving_plot_id];
-      if (move_plot_to_stack(stack_max_cols, moving_plot_id, to_stack, plot_count, stack_count, num_info_per_plot,
-                             cols_allocated_in_stacks, plot_in_stack)) {
-        unsigned diff_sum_after = size_differences_between_stacks(plot_count, stack_count, cols_allocated_in_stacks);
-        if (diff_sum_after <= diff_sum_before) {
-          moving_plot_id = plot_count;
-        } else {
-          // Move back
-          move_plot_to_stack(stack_max_cols, moving_plot_id, stack_before, plot_count, stack_count, num_info_per_plot,
-                             cols_allocated_in_stacks, plot_in_stack);
-        }
-      }
-    }
-    moving_plot_id--;
-  }
-}
 void compute_sizes_from_layout(unsigned devices_count, unsigned device_header_rows, unsigned device_header_cols,
-                               unsigned rows, unsigned cols, const nvtop_interface_gpu_opts *gpuOpts,
+                               unsigned rows, unsigned cols, const nvtop_interface_gpu_opts *gpu_opts,
                                process_field_displayed process_displayed, struct window_position *device_positions,
                                unsigned *num_plots, struct window_position plot_positions[MAX_CHARTS],
                                unsigned *map_device_to_plot, struct window_position *process_position,
                                struct window_position *setup_position, bool process_win_hide,
                                const struct host_chart_input *host_chart, struct window_position *host_chart_position) {
-
+  struct layout_request request = {
+      .devices_count = devices_count,
+      .device_header_rows = device_header_rows,
+      .device_header_cols = device_header_cols,
+      .rows = rows,
+      .cols = cols,
+      .gpu_opts = gpu_opts,
+      .process_displayed = process_displayed,
+      .hide_processes = process_win_hide,
+      .host_chart_lines = host_chart ? host_chart->num_lines : 0,
+      .host_detail_rows = (host_chart && host_chart->show) ? LAYOUT_HOST_DETAIL_ROWS : 0,
+  };
+  struct layout_result result = {
+      .sections = NULL,
+      .device_positions = device_positions,
+      .plot_positions = plot_positions,
+      .map_device_to_plot = map_device_to_plot,
+  };
+  compute_monitoring_layout(&request, &result);
+  if (num_plots)
+    *num_plots = result.num_plots;
+  if (process_position)
+    *process_position = result.process;
+  if (setup_position)
+    *setup_position = result.setup;
   if (host_chart_position)
-    *host_chart_position = (struct window_position){0, 0, 0, 0};
-
-  unsigned min_rows_for_header = 0, header_stacks = 0, num_device_per_row = 0;
-  num_device_per_row = max(1, cols / device_header_cols);
-  header_stacks = max(1, devices_count / num_device_per_row + ((devices_count % num_device_per_row) > 0));
-  if (devices_count % header_stacks == 0)
-    num_device_per_row = devices_count / header_stacks;
-  min_rows_for_header = header_stacks * device_header_rows;
-
-  unsigned min_rows_for_process =
-      process_field_displayed_count(process_displayed) ? min_rows_taken_by_process(rows, devices_count) : 0;
-
-  // Not enough room for the header and process
-  if (rows < min_rows_for_header + min_rows_for_process) {
-    if (rows >= min_rows_for_header + 2 && process_field_displayed_count(process_displayed)) { // Shrink process
-      min_rows_for_process = rows - min_rows_for_header;
-    } else { // Only header if possible
-      min_rows_for_header = rows;
-      min_rows_for_process = 0;
-    }
-  }
-
-  if (process_win_hide)
-    min_rows_for_process = 0;
-
-  unsigned rows_for_header = min_rows_for_header;
-  unsigned rows_for_process = min_rows_for_process;
-  unsigned rows_for_plots = rows - min_rows_for_header - min_rows_for_process;
-
-  unsigned num_plot_stacks = 0;
-  unsigned plot_in_stack[MAX_CHARTS];
-  preliminary_plot_positioning(rows_for_plots, cols, devices_count, gpuOpts, map_device_to_plot, plot_in_stack,
-                               num_plots, &num_plot_stacks);
-
-  // Transfer some lines to the header to separate the devices
-  unsigned transferable_lines = rows_for_plots - num_plot_stacks * min_plot_rows;
-  unsigned space_for_header = header_stacks == 0 ? 0 : header_stacks - 1;
-  bool space_between_header_stack = false;
-  if (transferable_lines >= space_for_header) {
-    rows_for_header += space_for_header;
-    rows_for_plots -= space_for_header;
-    space_between_header_stack = true;
-  }
-
-  // Allocate additional plot stacks if there is enough vertical room
-  if (num_plot_stacks > 0) {
-    while (num_plot_stacks < *num_plots && rows_for_plots / (num_plot_stacks + 1) >= 11 &&
-           (num_plot_stacks + 1) * min_plot_rows <= rows_for_plots)
-      num_plot_stacks++;
-  }
-
-  // Compute the cols used in each stacks to prepare balancing
-  unsigned num_info_per_plot[MAX_CHARTS];
-  for (unsigned i = 0; i < *num_plots; ++i) {
-    num_info_per_plot[i] = info_in_plot(i, devices_count, map_device_to_plot, gpuOpts);
-  }
-  unsigned cols_allocated_in_stacks[MAX_CHARTS];
-  for (unsigned i = 0; i < num_plot_stacks; ++i) {
-    cols_allocated_in_stacks[i] = cols_used_by_stack(i, *num_plots, num_info_per_plot, plot_in_stack);
-  }
-
-  // Keep the plot order of apparition, but spread the plot on different stacks
-  balance_info_on_stacks_preserving_plot_order(cols, num_plot_stacks, *num_plots, num_info_per_plot,
-                                               cols_allocated_in_stacks, plot_in_stack);
-
-  // The host chart is a full chart row of its own, inserted right above the GPU
-  // chart rows. It never shares a row with a GPU chart and never merges with
-  // one: the GPU chart count, order, grouping and columns are left untouched.
-  // Every chart row, the host one included, takes an equal share of the
-  // vertical chart space. The host chart is dropped when the chart area cannot
-  // give one more row of the minimum chart height to it, or when a row of the
-  // chart area is too narrow to hold it.
-  bool allocate_host_chart = false;
-  unsigned host_chart_lines = host_chart ? host_chart->num_lines : 0;
-  if (host_chart && host_chart->show && host_chart_lines > 0 && host_chart_lines <= MAX_LINES_PER_PLOT &&
-      host_chart_position && cols >= min_plot_cols(host_chart_lines) &&
-      rows_for_plots >= (num_plot_stacks + 1) * min_plot_rows) {
-    allocate_host_chart = true;
-  }
-
-  unsigned num_chart_rows = num_plot_stacks + (allocate_host_chart ? 1u : 0u);
-
-  // Device Information Header
-  unsigned cols_header_left = cols - num_device_per_row * device_header_cols;
-  bool space_between_header_col = false;
-  bool space_before_header = false;
-  if (cols_header_left > num_device_per_row) {
-    space_between_header_col = true;
-    cols_header_left -= num_device_per_row - 1;
-  }
-  if (cols_header_left > 0)
-    space_before_header = true;
-
-  unsigned num_this_row = 0;
-  unsigned headerPosX = space_before_header;
-  unsigned headerPosY = 0;
-  for (unsigned i = 0; i < devices_count; ++i) {
-    device_positions[i].posX = headerPosX;
-    device_positions[i].posY = headerPosY;
-    device_positions[i].sizeX = device_header_cols;
-    device_positions[i].sizeY = device_header_rows;
-    num_this_row++;
-    if (num_this_row == num_device_per_row) {
-      headerPosX = space_before_header;
-      headerPosY += device_header_rows + space_between_header_stack;
-      num_this_row = 0;
-    } else {
-      headerPosX += device_header_cols + space_between_header_col;
-    }
-  }
-
-  unsigned rows_left_for_process = 0;
-  if (num_chart_rows > 0) {
-    unsigned rows_per_stack = rows_for_plots / num_chart_rows;
-    if (!process_win_hide && rows_per_stack > 23)
-      rows_per_stack = 23;
-    unsigned num_plot_done = 0;
-    unsigned currentPosX = 0, currentPosY = rows_for_header;
-    // Nothing of the GPU charts matches that stack id.
-    const unsigned no_plot_stack = UINT_MAX;
-    // The row of the host chart shifts every GPU chart row down by one.
-    const unsigned stack_row_offset = allocate_host_chart ? 1u : 0u;
-    for (unsigned row_id = 0; row_id < num_chart_rows; ++row_id) {
-      // The host chart owns the first chart row, right below the device
-      // headers, and takes the whole width of that row. The GPU chart rows
-      // follow it, one row per stack, unchanged.
-      bool host_in_this_row = allocate_host_chart && (row_id == 0);
-      unsigned stack_id = host_in_this_row ? no_plot_stack : (row_id - stack_row_offset);
-      unsigned plot_in_this_stack = host_in_this_row ? 1u : 0u;
-      unsigned lines_to_draw = host_in_this_row ? host_chart_lines : 0u;
-      for (unsigned j = 0; j < *num_plots; ++j) {
-        if (plot_in_stack[j] == stack_id) {
-          plot_in_this_stack++;
-          lines_to_draw += num_info_per_plot[j];
-        }
-      }
-      unsigned cols_for_line_drawing = cols - plot_in_this_stack * cols_needed_box_drawing;
-      if (host_in_this_row) {
-        // The whole row belongs to the host chart. Like every other chart, it
-        // shares its drawing columns out evenly between its lines.
-        unsigned host_max_cols = cols_needed_box_drawing + cols_for_line_drawing * host_chart_lines / lines_to_draw;
-        unsigned host_cols = host_max_cols - (host_max_cols - cols_needed_box_drawing) % host_chart_lines;
-        *host_chart_position = (struct window_position){currentPosX, currentPosY, host_cols, rows_per_stack};
-      }
-      for (unsigned j = 0; j < *num_plots; ++j) {
-        if (plot_in_stack[j] == stack_id) {
-          unsigned max_plot_cols =
-              cols_needed_box_drawing + cols_for_line_drawing * num_info_per_plot[j] / lines_to_draw;
-          unsigned plot_cols = max_plot_cols - (max_plot_cols - cols_needed_box_drawing) % num_info_per_plot[j];
-          plot_positions[num_plot_done].posX = currentPosX;
-          plot_positions[num_plot_done].posY = currentPosY;
-          plot_positions[num_plot_done].sizeX = plot_cols;
-          plot_positions[num_plot_done].sizeY = rows_per_stack;
-          currentPosX += max_plot_cols;
-          num_plot_done++;
-        }
-      }
-      currentPosY += rows_per_stack;
-      currentPosX = 0;
-    }
-    if (process_field_displayed_count(process_displayed) > 0)
-      rows_left_for_process = rows_for_plots - rows_per_stack * num_chart_rows;
-  } else {
-    // No plot displayed, allocate the leftover space to the processes
-    if (process_field_displayed_count(process_displayed) > 0 && rows_for_plots > 0)
-      rows_for_process += rows_for_plots - 1;
-  }
-
-  process_position->posX = 0;
-  process_position->posY = rows - rows_for_process - rows_left_for_process;
-  process_position->sizeY = rows_for_process + rows_left_for_process;
-  process_position->sizeX = cols;
-
-  setup_position->posX = 0;
-  setup_position->posY = rows_for_header;
-  setup_position->sizeY = rows - rows_for_header;
-  setup_position->sizeX = cols;
+    *host_chart_position = result.host_chart;
 }

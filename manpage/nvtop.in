@@ -47,7 +47,7 @@ Print the version and exit.
 You can enter the setup utility by pressing \fBF2\fR to view and modify the following interface options:
 .TP
 .I General
-This section deals with general interface options. \fBColor support\fR, \fBinterface update interval\fR and the \fBhost CPU usage\fR / \fBhost memory usage\fR lines of the combined host chart can be modified.
+This section deals with general interface options. \fBColor support\fR, \fBinterface update interval\fR and the \fBhost CPU usage\fR / \fBhost memory usage\fR lines of the combined CPU chart can be modified.
 .TP
 .I Devices
 This section deals with the devices display (top of the interface). You can \fBswitch the temperature scale to fahrenheit\fR and \fBset the encoder/decoder hiding timer\fR.
@@ -60,15 +60,26 @@ This section deals with the process list (bottom of the interface). You can \fBs
 
 .SH HOST CPU AND MEMORY MONITORING
 .TP
-On \fBLinux\fR only, \fBnvtop\fR can display the whole host usage in a single \fBhost chart\fR, the
+On \fBLinux\fR only, \fBnvtop\fR can display the whole host usage in a single \fBCPU chart\fR, the
 way the GPU utilization and the GPU memory share a GPU chart. The chart holds one percentage history
 line per enabled metric: the whole host \fBCPU\fR utilization and the whole host \fBmemory\fR
-utilization. The charts are stacked vertically, one full chart immediately below the previous one:
-the host chart owns the first chart row, full width, directly below the device headers, the GPU
-charts follow it in their usual order and grouping, and the process list stays below the charts. The
-host chart never shares a row with a GPU chart and never takes a column away from one. It is an
-ordinary chart: same size rules, same \fB0/25/50/75/100\fR scale, same border, same time axis and
-same resize behaviour, and it is dropped like any chart that does not fit a small terminal.
+utilization. The whole host CPU is a device of its own, the \fBCPU device\fR, listed before the GPU
+devices. The monitoring screen is a stack of sections, from the top of the terminal to the bottom:
+the CPU device (its detail block then its chart), one section per GPU device in its index order
+(each detail block directly above the chart that draws that device only), the process list, the
+unused space and the shortcut line, anchored to the last row. One blank row separates two sections,
+never a device detail block from its own chart. No chart ever shares a row with another one and none
+takes a column away from another: every visible device owns a full width chart of its own, and all
+of the visible charts share the available vertical space equally. The CPU chart is an ordinary
+chart: same size rules, same \fB0/25/50/75/100\fR scale, same border, same time axis and same
+resize behaviour.
+.TP
+On a small terminal that cannot give the minimum chart height to every device, whole device
+sections are left out, in a fixed order: the \fBCPU device first\fR, then the \fBGPU device sections
+from the highest index to the lowest\fR. A GPU section that is left out has neither a detail block
+nor a chart, so the visible GPUs stay an ordered prefix of the monitored ones; they are still
+monitored, they still keep their history and they are still listed in the setup screen. Everything
+comes back as soon as the terminal is tall enough again.
 .TP
 The CPU utilization is the difference between two successive samples of the aggregate
 \fI/proc/stat\fR counters (\fBidle\fR and \fBiowait\fR count as idle time, \fBguest\fR and
@@ -77,6 +88,16 @@ read from \fI/proc/meminfo\fR; the legend shows used/total GiB and the percentag
 legend when the chart is narrow. Data that cannot be read, including \fBMemAvailable\fR larger than
 \fBMemTotal\fR, displays \fBN/A\fR and leaves a hole in the curve: it is never plotted as a zero.
 Both lines are disabled by default on the other platforms.
+.TP
+The detail block above the CPU chart reads \fBDevice CPU [model] CORES physicalC/logicalT\fR, then
+the CPU utilization, the average CPU frequency and the 1/5/15 minute load averages, then the memory
+used/total, the memory percentage, the available memory and the swap used/total. The model and the
+core counts come from \fI/proc/cpuinfo\fR and \fI/sys/devices/system/cpu\fR, the frequency from the
+\fIcpuinfo_cur_freq\fR and \fIscaling_cur_freq\fR sysfs entries, the load averages from
+\fI/proc/loadavg\fR and the swap from \fI/proc/meminfo\fR, all refreshed with the normal update
+interval. Unavailable data reads \fBN/A\fR. On a narrow terminal the block drops the swap first,
+then the 5 and 15 minute load averages, then the available memory, and truncates an overlong CPU
+model: the CPU utilization and the memory used/total/percentage stay as long as the block fits.
 .TP
 The two options are saved with \fBF12\fR in the \fB[GeneralOption]\fR section of \fIinterface.ini\fR
 as \fBShowHostCpuUsage\fR and \fBShowHostMemUsage\fR.

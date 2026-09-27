@@ -38,7 +38,7 @@ static std::ostream &operator<<(std::ostream &os, const struct window_position &
 namespace {
 
 // Returns true if the two windows overlap, false otherwise.
-bool window_position_overlap(struct window_position &w1, struct window_position &w2) {
+bool window_position_overlap(const struct window_position &w1, const struct window_position &w2) {
   bool overlapX = w1.posX == w2.posX || (w1.posX < w2.posX && w1.posX + w1.sizeX - 1 >= w2.posX) ||
                   (w1.posX > w2.posX && w2.posX + w2.sizeX - 1 >= w1.posX);
   bool overlapY = w1.posY == w2.posY || (w1.posY < w2.posY && w1.posY + w1.sizeY - 1 >= w2.posY) ||
@@ -57,12 +57,12 @@ bool check_non_empty_window(const struct window_position &w1) {
 }
 
 // Check that the none of the windows overlap any other
-bool check_no_windows_overlap(std::vector<struct window_position> &windows) {
+bool check_no_windows_overlap(const std::vector<struct window_position> &windows) {
   bool has_overlap = false;
   for (unsigned winId = 0; winId < windows.size(); ++winId) {
-    struct window_position &currentWin = windows[winId];
+    const struct window_position &currentWin = windows[winId];
     for (unsigned winCompareId = winId + 1; winCompareId < windows.size(); ++winCompareId) {
-      struct window_position &compareTo = windows[winCompareId];
+      const struct window_position &compareTo = windows[winCompareId];
       bool overlaps = window_position_overlap(currentWin, compareTo);
       EXPECT_FALSE(overlaps) << "Between " << currentWin << " and " << compareTo;
       has_overlap = has_overlap || overlaps;
@@ -87,21 +87,71 @@ bool check_window_below(const struct window_position &w1, const struct window_po
   return w1.posY > w2.posY + w2.sizeY - 1;
 }
 
-// Returns true if the layout is valid
+// Check that a header sits directly above the chart it introduces: no other
+// chart starts between the header and the chart of its own devices.
+bool check_header_attached_to_its_chart(const struct window_position &header, const struct window_position &chart,
+                                        std::vector<struct window_position> &plot_position) {
+  bool valid = check_window_below(chart, header);
+  for (auto const &other : plot_position) {
+    if (&other == &chart)
+      continue;
+    if (window_is_empty(other))
+      continue;
+    // A chart of another section either ends above the header, or starts below
+    // the chart of this one. It never squeezes itself in between.
+    bool above = other.posY + other.sizeY - 1 < header.posY;
+    bool below = other.posY >= chart.posY; // Same row, side by side, or a later one.
+    EXPECT_TRUE(above || below) << "Chart " << other << " comes between the header " << header << " and its chart "
+                                << chart;
+    valid = valid && (above || below);
+  }
+  return valid;
+}
+
+// The windows that exist. A device the terminal cannot give a whole section
+// has no window at all: no header, no chart, and no place in any of the checks
+// below.
+std::vector<struct window_position> allocated_windows(const std::vector<struct window_position> &windows) {
+  std::vector<struct window_position> allocated;
+  for (const auto &win : windows)
+    if (!window_is_empty(win))
+      allocated.push_back(win);
+  return allocated;
+}
+
+// Returns true if the layout is valid. The monitoring screen is a stack of
+// sections: every visible device is a section of its own, its header sits
+// directly above the chart that draws that device only, and the process list
+// follows the last section. The devices the terminal cannot show are left out
+// whole, from the highest index to the lowest, so the visible devices are an
+// ordered prefix of the request.
 bool check_layout(struct window_position screen, std::vector<struct window_position> &dev_pos,
-                  std::vector<struct window_position> &plot_position, struct window_position process_position,
-                  struct window_position setup_position) {
+                  std::vector<struct window_position> &plot_position, std::vector<unsigned> &map_dev_to_plot,
+                  struct window_position process_position, struct window_position setup_position) {
   bool layout_valid = true;
 
   // Header
   // A particularity of the header is that it can be bigger than the screen
-  for (auto const &dev_win : dev_pos) {
-    bool valid = check_non_empty_window(dev_win);
-    if (!valid)
-      std::cout << "Error with header window: " << dev_win << std::endl;
-    layout_valid = layout_valid && valid;
+  // Only the devices of the visible prefix have one: a device with no section
+  // has no header either, and never a header above somebody else's chart.
+  bool still_showing_devices = true;
+  for (size_t dev = 0; dev < dev_pos.size(); ++dev) {
+    const unsigned plot = map_dev_to_plot[dev];
+    const bool visible = plot < plot_position.size();
+    if (visible) {
+      EXPECT_TRUE(still_showing_devices) << "Device " << dev << " is shown after a device that is not";
+      EXPECT_EQ(plot, static_cast<unsigned>(dev)) << "Device " << dev << " does not own its chart";
+      bool valid = check_non_empty_window(dev_pos[dev]);
+      if (!valid)
+        std::cout << "Error with header window: " << dev_pos[dev] << std::endl;
+      layout_valid = layout_valid && valid;
+      continue;
+    }
+    still_showing_devices = false;
+    EXPECT_EQ(plot, static_cast<unsigned>(MAX_CHARTS)) << "Device " << dev << " is mapped to a chart it has none of";
+    EXPECT_TRUE(window_is_empty(dev_pos[dev])) << "Device " << dev << " keeps a header without a chart";
   }
-  layout_valid = layout_valid && check_no_windows_overlap(dev_pos);
+  layout_valid = layout_valid && check_no_windows_overlap(allocated_windows(dev_pos));
 
   // Plots
   for (auto const &plot_win : plot_position) {
@@ -110,21 +160,28 @@ bool check_layout(struct window_position screen, std::vector<struct window_posit
       std::cout << "Error with plot window: " << plot_win << std::endl;
     layout_valid = layout_valid && valid;
   }
-  for (auto const &dev_win : dev_pos) {
-    for (auto const &plot_win : plot_position) {
-      layout_valid = layout_valid && check_window_below(plot_win, dev_win);
-      layout_valid = layout_valid && check_window_inside(plot_win, screen);
-    }
+  for (auto const &plot_win : plot_position)
+    layout_valid = layout_valid && check_window_inside(plot_win, screen);
+  layout_valid = layout_valid && check_no_windows_overlap(allocated_windows(plot_position));
+
+  // Every header is above its own chart and no other chart starts in between.
+  for (size_t dev = 0; dev < dev_pos.size(); ++dev) {
+    unsigned plot = map_dev_to_plot[dev];
+    if (plot >= plot_position.size())
+      continue; // No section fits in that terminal for that device at all.
+    layout_valid = layout_valid && check_header_attached_to_its_chart(dev_pos[dev], plot_position[plot], plot_position);
   }
-  layout_valid = layout_valid && check_no_windows_overlap(plot_position);
 
   // Processes
   for (auto const &plot_win : plot_position) {
+    if (window_is_empty(process_position))
+      continue;
     layout_valid = layout_valid && check_window_below(process_position, plot_win);
   }
   if (not window_is_empty(process_position))
     layout_valid = layout_valid && check_window_inside(process_position, screen);
 
+  (void)setup_position;
   return layout_valid;
 }
 
@@ -148,7 +205,7 @@ bool test_with_terminal_size(unsigned device_count, unsigned header_rows, unsign
                             &process_position, &setup_position, false, nullptr, nullptr);
   plot_positions.resize(num_plots);
 
-  return check_layout(screen, dev_positions, plot_positions, process_position, setup_position);
+  return check_layout(screen, dev_positions, plot_positions, map_dev_to_plot, process_position, setup_position);
 }
 
 } // namespace

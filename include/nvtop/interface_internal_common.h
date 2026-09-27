@@ -150,6 +150,10 @@ struct nvtop_interface {
   // algorithm; num_data_lines is zero when no host metric is enabled.
   struct plot_window host_plot;
   bool has_host_plot;
+  // The detail block of the CPU device, drawn right above the combined chart,
+  // the way the GPU detail blocks sit above their own charts. NULL when the
+  // CPU device is not displayed.
+  WINDOW *host_detail_window;
 };
 
 enum device_field {

@@ -26,7 +26,8 @@ Table of Contents
   - [Saving Preferences](#saving-preferences)
   - [NVTOP Manual and Command line Options](#nvtop-manual-and-command-line-options)
 - [Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)
-  - [Chart placement](#chart-placement)
+  - [Screen layout](#screen-layout)
+  - [The CPU detail block](#the-cpu-detail-block)
   - [Platform support](#platform-support)
   - [Metric semantics](#metric-semantics)
   - [Configuration keys](#configuration-keys)
@@ -72,7 +73,7 @@ utilization, temperature, power, clocks, and the **PCIe RX / TX load** (the rece
 throughput as a percentage of the maximum link bandwidth).
 
 In the ``General`` section you can enable or disable, independently, the **host CPU usage** and the
-**host memory usage** lines of the combined host chart (see
+**host memory usage** lines of the combined CPU chart (see
 [Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)). Both are enabled by default on
 Linux and disabled elsewhere. The layout is rebuilt as soon as you leave the setup window.
 
@@ -99,28 +100,63 @@ Host CPU and Memory Monitoring
 ------------------------------
 
 On Linux, ``nvtop`` can also report the whole host, next to the GPU metrics. The whole host CPU
-utilization and the whole host memory utilization share a single **host chart**, the way the GPU
+utilization and the whole host memory utilization share a single **CPU chart**, the way the GPU
 utilization and the GPU memory share a GPU chart: one percentage history line per enabled metric,
 drawn by the same plot renderer, with the same ``0/25/50/75/100`` scale, the same border and the
-same time axis.
+same time axis. The whole host CPU is treated as a device of its own, the **CPU device**, listed
+before the GPU devices.
 
-### Chart placement
+### Screen layout
 
-- The host chart is an ordinary chart: it gets the same outer dimensions, the same row height, the
-  same full chart row width, and the same resize and narrow terminal behaviour as the GPU charts.
-- The charts are stacked vertically, one full chart immediately below the previous one: the host
-  chart owns the first chart row, directly below the device headers, the GPU chart rows follow it in
-  their usual order and grouping, and the process list stays below the charts. The host chart never
-  shares a row with a GPU chart, and it never takes a column away from one either: the GPU charts
-  keep their original order, grouping and widths, while all chart rows share the available vertical
-  space equally, within the existing minimum chart height and process-list behaviour.
+The monitoring screen is a stack of sections, from the top of the terminal to the bottom:
+
+- the **CPU device**: its detail block, then its CPU chart;
+- the **GPU devices**, in their index order: **one section per device**, its own detail block
+  directly above its own chart;
+- the **process list**;
+- the unused space, if the charts and the process list do not fill the terminal;
+- the keyboard shortcut line, always the last row of the terminal.
+
+One blank row separates two sections. It never separates a device detail block from its own chart,
+so a GPU header only ever introduces the chart right below it.
+
+- The CPU chart is an ordinary chart: it gets the same outer dimensions, the same row height, the
+  same full chart row width, and the same resize and narrow terminal behaviour as the GPU charts. No
+  chart ever shares a row with another one and none takes a column away from another: every visible
+  device owns a full width chart of its own, and all of the visible charts share the available
+  vertical space equally, within the existing minimum chart height and process-list behaviour.
 - Enabling one metric draws one line in that chart, enabling both draws two lines, and disabling
-  both removes the chart entirely: no space is reserved for it.
-- On very small terminals the host chart is dropped like any chart that does not fit, rather than
-  eating into the GPU information: it is drawn as soon as the chart area can hold one more chart
-  row. It never overlaps the GPU headers, the plots, the process list or the shortcut line, and it
-  is re-laid out whenever the terminal is resized or an option changes.
+  both removes the CPU device entirely, its detail block and its blank row with it: no space is
+  reserved for it.
+- On a small terminal whole device sections are left out, in a fixed order: the **CPU device
+  first**, then the **GPU device sections from the highest index to the lowest**, until every
+  visible chart has at least the minimum chart height. A GPU section that is left out has neither a
+  detail block nor a chart, so the visible GPUs stay an ordered prefix of the monitored ones and no
+  header is ever left without the chart below it. Everything comes back as soon as the terminal is
+  tall enough again. Nothing overlaps, nothing leaves the terminal, and everything is re-laid out
+  whenever the terminal is resized or an option changes. The hidden GPUs are still monitored, they
+  still keep their history and they are still listed in the setup screen.
 - The history curves are kept when the window is resized: only the drawing surface is recomputed.
+
+### The CPU detail block
+
+Above its chart, the CPU device shows a three row detail block, as dense as a GPU one:
+
+```
+Device CPU [<model>]  CORES <physical>C/<logical>T
+CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>
+RAM  <used>/<total> GiB  <percent>%   AVAIL <available GiB>   SWAP <used>/<total> GiB
+```
+
+The CPU utilization and the memory usage are exactly the values drawn by the CPU chart. The CPU
+model and the core counts come from ``/proc/cpuinfo`` (with ``/sys/devices/system/cpu/`` for the
+logical threads), the average frequency from the ``cpuinfo_cur_freq`` / ``scaling_cur_freq`` sysfs
+entries, the load averages from ``/proc/loadavg``, and the swap from ``/proc/meminfo``; everything
+refreshes with the normal update interval. Missing or malformed fields show ``N/A``. When the
+terminal is too narrow, the block shortens in that order: swap, then the 5m and 15m load averages,
+then the available memory; the CPU utilization and the memory used/total/percentage stay as long as
+the block itself fits, and an overlong CPU model is truncated rather than overflowing the terminal.
+CPU temperature and package power are not part of this block.
 
 ### Platform support
 

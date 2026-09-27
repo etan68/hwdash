@@ -309,6 +309,10 @@ alloc_error:
 }
 
 static void free_device_windows(struct device_window *dwin) {
+  // A device the monitoring layout cannot show has no window at all: there is
+  // nothing to free, and delwin() must not be called on the empty entry.
+  if (dwin->name_win == NULL)
+    return;
   delwin(dwin->name_win);
   delwin(dwin->gpu_util_enc_dec);
   delwin(dwin->mem_util_enc_dec);
@@ -488,13 +492,13 @@ static void alloc_plot_window(unsigned devices_count, struct window_position *pl
 // Whole host CPU and memory chart ////////////////////////////////////////////
 // The whole host CPU utilization and the whole host memory utilization share a
 // single chart, the way the GPU utilization and the GPU memory share a GPU
-// chart. compute_sizes_from_layout() gives it the same geometry rules as an
-// ordinary chart and lets it own the first chart row, right below the device
-// headers and above all the GPU chart rows, so the charts stack up vertically:
-// the host chart, then the GPU charts in their usual order, then the process
-// list. It is drawn with the same renderer as the GPU charts, so it shares
-// their border, their 0/25/50/75/100 scale, their time axis and the direction
-// of time.
+// chart. compute_monitoring_layout() gives it the same geometry rules as an
+// ordinary chart and makes it the chart of the CPU device section: the first
+// section of the screen, its detail block right above it, and the GPU device
+// sections follow it, one after the other, then the process list, so that every
+// device owns a full width chart of its own. It is drawn with the same renderer
+// as the GPU charts, so it shares their border, their 0/25/50/75/100 scale,
+// their time axis and the direction of time.
 
 static bool host_metric_enabled(const struct nvtop_interface *interface, enum host_metric metric) {
   switch (metric) {
@@ -527,6 +531,15 @@ static void free_host_plot(struct nvtop_interface *interface) {
   free(interface->host_plot.data);
   memset(&interface->host_plot, 0, sizeof(interface->host_plot));
   interface->has_host_plot = false;
+}
+
+// The detail block of the CPU device: a fixed height window, as dense as a GPU
+// detail block, that the layout places right above the combined CPU/RAM chart.
+static void alloc_host_detail_window(struct nvtop_interface *interface, const struct window_position *position) {
+  interface->host_detail_window = NULL;
+  if (!position || position->sizeX == 0 || position->sizeY < HOST_DETAIL_LINE_COUNT)
+    return;
+  interface->host_detail_window = newwin(position->sizeY, position->sizeX, position->posY, position->posX);
 }
 
 static void alloc_host_plot(struct nvtop_interface *interface, const struct window_position *position,
@@ -593,6 +606,38 @@ static unsigned populate_host_plot_data(const struct nvtop_interface *interface,
   return in_processing;
 }
 
+// Draw the CPU detail block with the values the combined chart draws: the same
+// sampled CPU utilization and the same memory usage, so that the block and the
+// chart can never disagree. Each line is printed with mvwaddnstr, so that a
+// narrow terminal truncates it instead of wrapping it over the next section.
+static void draw_host_detail(struct nvtop_interface *interface) {
+  WINDOW *win = interface->host_detail_window;
+  if (!win)
+    return;
+  const struct host_metrics_state *state = host_metrics_get_state();
+  unsigned rows_of_win, cols_of_win;
+  getmaxyx(win, rows_of_win, cols_of_win);
+  (void)rows_of_win;
+  werase(win);
+  char line[512];
+  for (unsigned line_index = 0; line_index < HOST_DETAIL_LINE_COUNT; ++line_index) {
+    host_metrics_format_detail_line(state, line_index, cols_of_win, line, sizeof(line));
+    if (line_index == 0) {
+      // "Device CPU" in the color of the GPU device names, the rest in the
+      // default color, like the GPU detail blocks do.
+      wcolor_set(win, cyan_color, NULL);
+      mvwaddnstr(win, (int)line_index, 0, line, 10 < (int)strlen(line) ? 10 : (int)strlen(line));
+      wstandend(win);
+      const unsigned past = 10;
+      if (strlen(line) > past)
+        mvwaddnstr(win, (int)line_index, (int)past, line + past, (int)(strlen(line + past)));
+    } else {
+      mvwaddnstr(win, (int)line_index, 0, line, (int)strlen(line));
+    }
+  }
+  wnoutrefresh(win);
+}
+
 static void draw_host_plot(struct nvtop_interface *interface) {
   if (!interface->has_host_plot)
     return;
@@ -637,44 +682,70 @@ static void initialize_all_windows(struct nvtop_interface *dwin) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
 
-  unsigned int devices_count = dwin->monitored_dev_count;
+  const unsigned int devices_count = dwin->monitored_dev_count;
 
-  struct window_position device_positions[devices_count];
-  unsigned map_device_to_plot[devices_count];
-  struct window_position process_position;
+  struct window_position device_positions[max(1u, devices_count)];
+  unsigned map_device_to_plot[max(1u, devices_count)];
   struct window_position plot_positions[MAX_CHARTS];
-  struct window_position setup_position;
-  struct window_position host_plot_position;
+  struct layout_section sections[MAX_LAYOUT_SECTIONS];
+  for (unsigned int i = 0; i < devices_count; ++i) {
+    // No device has a header or a chart until the layout gives it one.
+    map_device_to_plot[i] = MAX_CHARTS;
+    device_positions[i] = (struct window_position){0, 0, 0, 0};
+  }
 
   // NVLink layout adjustments must happen before panel dimensions are computed.
   // any_device_has_nvlink_active is set by the probe that runs before this function.
   nvtop_adjust_field_sizes_for_nvlink();
 
-  // The whole host chart is an extra chart of the chart area, laid out with the
-  // same rules as the GPU charts. It owns the first chart row, full width, and
-  // takes one equal share of the chart space before the existing GPU rows.
-  unsigned host_plot_lines = host_chart_line_count(dwin);
-  struct host_chart_input host_chart = {.show = host_plot_lines > 0, .num_lines = host_plot_lines};
-
-  compute_sizes_from_layout(devices_count, dwin->options.has_gpu_info_bar ? 4 : 3, device_length(), rows - 1, cols,
-                            dwin->options.gpu_specific_opts, dwin->options.process_fields_displayed, device_positions,
-                            &dwin->num_plots, plot_positions, map_device_to_plot, &process_position, &setup_position,
-                            dwin->options.hide_processes_list, &host_chart, &host_plot_position);
+  // The whole host CPU is a device like the GPUs: its detail block sits right
+  // above the combined CPU/RAM chart, and the section it makes follows the same
+  // top to bottom order as every other section of the screen.
+  const unsigned host_plot_lines = host_chart_line_count(dwin);
+  const struct layout_request request = {
+      .devices_count = devices_count,
+      .device_header_rows = dwin->options.has_gpu_info_bar ? 4 : 3,
+      .device_header_cols = device_length(),
+      .rows = (unsigned)rows - 1, // The shortcut line is not part of the layout
+      .cols = (unsigned)cols,
+      .gpu_opts = dwin->options.gpu_specific_opts,
+      .process_displayed = dwin->options.process_fields_displayed,
+      .hide_processes = dwin->options.hide_processes_list,
+      .host_chart_lines = host_plot_lines,
+      .host_detail_rows = host_plot_lines > 0 ? HOST_DETAIL_LINE_COUNT : 0,
+  };
+  struct layout_result layout = {
+      .sections = sections,
+      .device_positions = device_positions,
+      .plot_positions = plot_positions,
+      .map_device_to_plot = map_device_to_plot,
+  };
+  compute_monitoring_layout(&request, &layout);
+  dwin->num_plots = layout.num_plots;
 
   alloc_plot_window(devices_count, plot_positions, map_device_to_plot, dwin);
-  alloc_host_plot(dwin, &host_plot_position, host_plot_lines);
+  alloc_host_plot(dwin, &layout.host_chart, host_plot_lines);
+  alloc_host_detail_window(dwin, &layout.host_detail);
 
   for (unsigned int i = 0; i < devices_count; ++i) {
+    if (i >= MAX_CHARTS || map_device_to_plot[i] >= dwin->num_plots) {
+      // The layout gave that device neither a header nor a chart: the terminal
+      // cannot hold one more device section, or the device is past the charts
+      // the interface can draw. No window is allocated for it, and neither the
+      // drawing nor the freeing may use the entry.
+      memset(&dwin->devices_win[i], 0, sizeof(dwin->devices_win[i]));
+      continue;
+    }
     alloc_device_window(device_positions[i].posY, device_positions[i].posX, device_positions[i].sizeX,
                         &dwin->devices_win[i]);
   }
 
-  alloc_process_with_option(dwin, process_position.posX, process_position.posY, process_position.sizeX,
-                            process_position.sizeY);
+  alloc_process_with_option(dwin, layout.process.posX, layout.process.posY, layout.process.sizeX, layout.process.sizeY);
 
-  dwin->shortcut_window = newwin(1, cols, rows - 1, 0);
+  dwin->shortcut_window =
+      newwin(layout.shortcut.sizeY, layout.shortcut.sizeX, layout.shortcut.posY, layout.shortcut.posX);
 
-  alloc_setup_window(&setup_position, &dwin->setup_win);
+  alloc_setup_window(&layout.setup, &dwin->setup_win);
   nvtop_pid = getpid();
 }
 
@@ -694,6 +765,10 @@ static void delete_all_windows(struct nvtop_interface *dwin) {
     free(dwin->plots[i].data);
   }
   free_host_plot(dwin);
+  if (dwin->host_detail_window) {
+    delwin(dwin->host_detail_window);
+    dwin->host_detail_window = NULL;
+  }
   free_setup_window(&dwin->setup_win);
   free(dwin->plots);
 }
@@ -968,6 +1043,14 @@ static void draw_devices(struct list_head *devices, struct nvtop_interface *inte
 
   list_for_each_entry(device, devices, list) {
     struct device_window *dev = &interface->devices_win[dev_id];
+
+    // A device the monitoring layout could not fit in the terminal has no
+    // window at all: its detail block is simply not drawn. The device stays
+    // monitored, keeps its history and stays listed in the setup screen.
+    if (dev->name_win == NULL) {
+      ++dev_id;
+      continue;
+    }
 
     wcolor_set(dev->name_win, cyan_color, NULL);
     mvwprintw(dev->name_win, 0, 0, "Device %-2u", dev_id);
@@ -2306,6 +2389,7 @@ void draw_gpu_info_ncurses(unsigned devices_count, struct list_head *devices, st
   if (!interface->setup_win.visible) {
     draw_plots(devices, interface);
     draw_processes(devices, interface);
+    draw_host_detail(interface);
     draw_host_plot(interface);
   } else {
     draw_setup_window(devices_count, devices, interface);

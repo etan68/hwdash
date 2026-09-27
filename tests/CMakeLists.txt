@@ -9,6 +9,22 @@ if (BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(hostMetricsTest PRIVATE m)
   add_test(NAME hostMetricsTest COMMAND hostMetricsTest)
+
+  # The section layout checks the shape of the monitoring screen from the top
+  # of the terminal to the bottom: no GPU, no ncurses and no gtest either.
+  add_executable(
+    sectionLayoutTest
+    sectionLayoutTest.c
+    stubProcessinfo.c
+    ${PROJECT_SOURCE_DIR}/src/interface_layout_selection.c
+    ${PROJECT_SOURCE_DIR}/src/interface_options.c
+    ${PROJECT_SOURCE_DIR}/src/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/ini.c
+  )
+  target_include_directories(sectionLayoutTest PRIVATE
+    ${PROJECT_SOURCE_DIR}/include)
+  target_link_libraries(sectionLayoutTest PRIVATE m)
+  add_test(NAME sectionLayoutTest COMMAND sectionLayoutTest)
 endif()
 
 find_package(GTest)
