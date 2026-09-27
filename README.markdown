@@ -106,6 +106,13 @@ drawn by the same plot renderer, with the same ``0/25/50/75/100`` scale, the sam
 same time axis. The whole host CPU is treated as a device of its own, the **CPU device**, listed
 before the GPU devices.
 
+The legend of a chart is the key of a curve, not a readout of it: the entries of a chart are all
+drawn on a single row, horizontally, in plot line order, and every entry carries a short
+``---`` swatch so that it visibly belongs to a line. The text and the swatch of an entry use the
+color of the plot line they stand for, so a GPU chart reads ``GPU0 % ---    GPU0 mem% ---`` and the
+CPU chart ``CPU % ---    RAM % ---``. The current value of a metric is not part of its legend: the
+detail block right above each chart already shows the values.
+
 ### Screen layout
 
 The monitoring screen is a stack of sections, from the top of the terminal to the bottom:
@@ -144,7 +151,7 @@ Above its chart, the CPU device shows a three row detail block, as dense as a GP
 
 ```
 Device CPU [<model>]  CORES <physical>C/<logical>T
-CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>
+CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>   POWER <package watts>W
 RAM  <used>/<total> GiB  <percent>%   AVAIL <available GiB>   SWAP <used>/<total> GiB
 ```
 
@@ -153,10 +160,15 @@ model and the core counts come from ``/proc/cpuinfo`` (with ``/sys/devices/syste
 logical threads), the average frequency from the ``cpuinfo_cur_freq`` / ``scaling_cur_freq`` sysfs
 entries, the load averages from ``/proc/loadavg``, and the swap from ``/proc/meminfo``; everything
 refreshes with the normal update interval. Missing or malformed fields show ``N/A``. When the
-terminal is too narrow, the block shortens in that order: swap, then the 5m and 15m load averages,
-then the available memory; the CPU utilization and the memory used/total/percentage stay as long as
-the block itself fits, and an overlong CPU model is truncated rather than overflowing the terminal.
-CPU temperature and package power are not part of this block.
+terminal is too narrow, the block shortens in that order: swap, then the 15m and 5m load averages,
+then the available memory, then the package power, then the frequency and the rest of the static CPU
+information; the CPU utilization and the memory used/total/percentage stay as long as the block
+itself fits, and an overlong CPU model is truncated rather than overflowing the terminal. The field
+titles of the block - ``Device CPU``, ``CORES``, ``CPU``, ``FREQ``, ``LOAD``, ``POWER``, ``RAM``,
+``AVAIL``, ``SWAP`` - are highlighted with the same color as the titles of a GPU detail block, and
+the values keep the normal terminal color; a title a narrow terminal dropped is not highlighted.
+CPU temperature is not part of this block, and the power is the one of the whole CPU package: one
+power for now, neither a per core breakdown nor a curve of the chart.
 
 ### Platform support
 
@@ -165,12 +177,30 @@ Whole host metrics are collected on **Linux only**, from the ``/proc`` filesyste
 - CPU utilization from the aggregate ``cpu`` line of ``/proc/stat``;
 - memory usage from ``MemTotal`` and ``MemAvailable`` in ``/proc/meminfo``.
 
+The package power of the CPU detail block does not come from ``/proc`` but from the standard power
+interfaces of the kernel, and it is sampled once per refresh like the rest:
+
+- the powercap (RAPL) energy counter of the package, looked up by the ``name`` its zone declares
+  (``package``, ``pkg``, ``soc``, the AMD ``amd`` domain, with or without a ``-<index>`` suffix) and
+  not by a fixed ``intel-rapl:0`` path; the watts are the delta of ``energy_uj`` over the elapsed
+  monotonic time, and the counter wrapping at ``max_energy_range_uj`` is the normal way of counting,
+  not an error;
+- where no such zone exists, an hwmon ``power*_input`` sensor - but only one whose ``power*_label``
+  says it is the package.
+
+No raw MSR access and no external tool is used, so whatever the kernel does not expose to this
+process is simply not reported: a first sample, a counter that reset without a wrap to explain it, a
+wrap adding up to a power no package draws, a zone that disappears, a malformed file and a platform
+with no such interface all show ``POWER N/A``, never a fabricated ``POWER 0.0W``. On a machine whose
+kernel exposes no readable energy counter to a normal user, ``POWER N/A`` is therefore the expected
+display.
+
 Other operating systems keep building; they simply have no host metrics, and the lines default to
-disabled there. If they are enabled by hand on such a platform, the legend shows ``N/A`` instead of
-a fake value. When a sample cannot be read or is not usable (missing or malformed ``/proc`` data,
-``MemAvailable`` larger than ``MemTotal``, counter reset, no elapsed tick between two refreshes),
-the legend displays ``N/A`` and the curve leaves a hole: unavailable data is never displayed as an
-idle 0% load and never plotted as a zero.
+disabled there. If they are enabled by hand on such a platform, the detail block shows ``N/A``
+instead of a fake value, and the chart draws no curve. When a sample cannot be read or is not usable
+(missing or malformed ``/proc`` data, ``MemAvailable`` larger than ``MemTotal``, counter reset, no
+elapsed tick between two refreshes), the detail block displays ``N/A`` and the curve leaves a hole:
+unavailable data is never displayed as an idle 0% load and never plotted as a zero.
 
 The metrics are sampled once per interface refresh, like the GPU metrics: no extra polling and no
 busy loop are introduced, and ``-s``/``--sort-by`` style command line paths are unaffected.
@@ -185,9 +215,9 @@ busy loop are introduced, and ``-s``/``--sort-by`` style command line paths are 
 - **Memory**: ``used = MemTotal - MemAvailable``, the definition used by ``free`` and by the kernel
   itself, so the reclaimable page cache and the reclaimable slab are *not* counted as used memory.
   It is deliberately not a sum of the per-process memory: shared libraries, page tables and kernel
-  allocations would be missed or counted several times. The legend shows used and total in GiB
-  (powers of 1024) and the usage as a percentage of ``MemTotal``, and falls back to a shorter
-  ``RAM 20.3%`` legend when the detailed one does not fit the chart.
+  allocations would be missed or counted several times. The detail block shows used and total in
+  GiB (powers of 1024), the usage as a percentage of ``MemTotal`` and the available memory; the
+  legend of the line is its key, ``RAM %``, exactly like the legend of every other chart line.
 
 ### Configuration keys
 

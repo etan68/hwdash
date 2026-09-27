@@ -34,6 +34,7 @@ extern "C" {
 #include "nvtop/host_metrics.h"
 #include "nvtop/interface_layout_selection.h"
 #include "nvtop/interface_options.h"
+#include "nvtop/plot_legend.h"
 }
 
 static std::ostream &operator<<(std::ostream &os, const window_position &win) {
@@ -410,58 +411,261 @@ TEST(HostMetricsMemory, UsageBoundaries) {
   EXPECT_FALSE(host_memory_usage(&empty, &used, &total, &percent));
 }
 
-// The legends of the two lines of the combined host chart. Same buffer size as
-// the chart legends, see PLOT_MAX_LEGEND_SIZE.
-TEST(HostMetricsLegend, CurrentValuesAndUnavailable) {
+// The legend keys of the two lines of the combined host chart. A legend is the
+// key of a curve, not a readout of it: the values belong to the detail block of
+// the device, right above the chart. Same buffer size as the chart legends, see
+// PLOT_MAX_LEGEND_SIZE.
+TEST(HostMetricsLegend, KeysSayTheMetricAndNothingElse) {
   host_metrics_state state = {};
   ASSERT_TRUE(host_metrics_init(&state, 32u));
-  char legend[35] = {};
 
-  // Nothing sampled: N/A, never the idle zero the zeroed state would suggest.
   EXPECT_STREQ(host_metric_name(host_metric_cpu), "CPU");
   EXPECT_STREQ(host_metric_name(host_metric_memory), "RAM");
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_cpu, false, legend, sizeof(legend)), 7u);
-  EXPECT_STREQ(legend, "CPU N/A");
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_memory, false, legend, sizeof(legend)), 7u);
-  EXPECT_STREQ(legend, "RAM N/A");
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_memory, true, legend, sizeof(legend)), 7u);
-  EXPECT_STREQ(legend, "RAM N/A");
-  EXPECT_EQ(host_metrics_format_legend(nullptr, host_metric_cpu, false, legend, sizeof(legend)), 7u);
-  EXPECT_STREQ(legend, "CPU N/A");
+  EXPECT_STREQ(host_metric_legend_name(host_metric_cpu), "CPU %");
+  EXPECT_STREQ(host_metric_legend_name(host_metric_memory), "RAM %");
+  EXPECT_STREQ(host_metric_legend_name(host_metric_count), "Host %");
+  EXPECT_LT(std::strlen(host_metric_legend_name(host_metric_cpu)), 35u);
+  EXPECT_LT(std::strlen(host_metric_legend_name(host_metric_memory)), 35u);
 
+  // The key does not depend on the state: a metric that has no sample yet, or no
+  // sample anymore, keeps its key. That is what the swatch of the legend row is
+  // drawn next to, whatever the metric currently reports.
   state.cpu_valid = true;
   state.cpu_percent = 42.5;
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_cpu, false, legend, sizeof(legend)), 9u);
-  EXPECT_STREQ(legend, "CPU 42.5%");
-
   state.memory_valid = true;
   state.memory_used_gib = 12.;
   state.memory_total_gib = 16.;
   state.memory_percent = 75.;
-  unsigned detailed = host_metrics_format_legend(&state, host_metric_memory, false, legend, sizeof(legend));
-  EXPECT_STREQ(legend, "RAM 12.00/16.00 GiB 75.0%");
-  unsigned short_form = host_metrics_format_legend(&state, host_metric_memory, true, legend, sizeof(legend));
-  EXPECT_STREQ(legend, "RAM 75.0%");
-  // The short form is the one the narrow charts fall back to.
-  EXPECT_LT(short_form, detailed);
-  // Like snprintf, the returned length tells the caller that the detailed form
-  // does not fit the chart, without writing outside of the buffer.
-  char narrow[12] = {};
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_memory, false, narrow, sizeof(narrow)), detailed);
-  EXPECT_EQ(std::strlen(narrow), sizeof(narrow) - 1);
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_memory, true, narrow, sizeof(narrow)), short_form);
-  EXPECT_STREQ(narrow, "RAM 75.0%");
-
-  // A metric that goes back to unavailable must not keep a stale percentage.
-  state.memory_valid = false;
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_memory, true, legend, sizeof(legend)), 7u);
-  EXPECT_STREQ(legend, "RAM N/A");
-
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_count, false, legend, sizeof(legend)), 8u);
-  EXPECT_STREQ(legend, "Host N/A");
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_cpu, false, nullptr, sizeof(legend)), 0u);
-  EXPECT_EQ(host_metrics_format_legend(&state, host_metric_cpu, false, legend, 0u), 0u);
+  EXPECT_STREQ(host_metric_legend_name(host_metric_cpu), "CPU %");
+  EXPECT_STREQ(host_metric_legend_name(host_metric_memory), "RAM %");
+  // No value, so no digit either: a key never reads like a measurement.
+  EXPECT_EQ(std::strchr(host_metric_legend_name(host_metric_memory), '0'), nullptr);
   host_metrics_release(&state);
+}
+
+// The row the chart legend is drawn as: the keys of every line of the chart, on
+// one row, in plot line order, each one with its horizontal swatch.
+TEST(HostPlotLegend, AllTheKeysOnOneRow) {
+  char legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE] = {};
+  plot_legend_key keys[MAX_LINES_PER_PLOT] = {};
+  char row[PLOT_LEGEND_ROW_SIZE] = {};
+
+  // The default GPU chart: the utilization and the memory of the first device.
+  std::snprintf(legend[0], PLOT_MAX_LEGEND_SIZE, "%s", "GPU0 %");
+  std::snprintf(legend[1], PLOT_MAX_LEGEND_SIZE, "%s", "GPU0 mem%");
+  unsigned needed = nvtop_format_plot_legend_row(row, sizeof(row), 2u, legend, keys, MAX_LINES_PER_PLOT);
+  EXPECT_STREQ(row, "GPU0 % ---    GPU0 mem% ---");
+  EXPECT_EQ(needed, std::strlen(row));
+  EXPECT_EQ(keys[0].offset, 0u);
+  EXPECT_EQ(keys[0].length, std::strlen("GPU0 % ---"));
+  EXPECT_EQ(keys[1].offset, std::strlen("GPU0 % ---") + PLOT_LEGEND_ENTRY_GAP);
+  EXPECT_EQ(keys[1].length, std::strlen("GPU0 mem% ---"));
+  EXPECT_EQ(keys[2].length, 0u); // No line, no key
+
+  // The CPU chart, same layout: the two host lines are keys too.
+  std::snprintf(legend[0], PLOT_MAX_LEGEND_SIZE, "%s", host_metric_legend_name(host_metric_cpu));
+  std::snprintf(legend[1], PLOT_MAX_LEGEND_SIZE, "%s", host_metric_legend_name(host_metric_memory));
+  needed = nvtop_format_plot_legend_row(row, sizeof(row), 2u, legend, keys, MAX_LINES_PER_PLOT);
+  EXPECT_STREQ(row, "CPU % ---    RAM % ---");
+  EXPECT_EQ(needed, std::strlen(row));
+
+  // A custom chart with a single line, and one with all of them.
+  std::snprintf(legend[1], PLOT_MAX_LEGEND_SIZE, "%s", "");
+  needed = nvtop_format_plot_legend_row(row, sizeof(row), 1u, legend, keys, MAX_LINES_PER_PLOT);
+  EXPECT_STREQ(row, "CPU % ---");
+  EXPECT_EQ(needed, std::strlen(row));
+
+  const char *names[MAX_LINES_PER_PLOT] = {"GPU0 %", "GPU0 mem%", "GPU0 temp(c)", "GPU0 power%"};
+  for (unsigned i = 0; i < MAX_LINES_PER_PLOT; ++i)
+    std::snprintf(legend[i], PLOT_MAX_LEGEND_SIZE, "%s", names[i]);
+  needed = nvtop_format_plot_legend_row(row, sizeof(row), MAX_LINES_PER_PLOT, legend, keys, MAX_LINES_PER_PLOT);
+  EXPECT_EQ(needed, std::strlen(row));
+  unsigned offset = 0u;
+  for (unsigned i = 0; i < MAX_LINES_PER_PLOT; ++i) {
+    // One key per line, in plot line order, with a gap between them.
+    EXPECT_EQ(keys[i].offset, offset);
+    EXPECT_EQ(keys[i].length, std::strlen(names[i]) + 1u + PLOT_LEGEND_SWATCH_SIZE);
+    EXPECT_EQ(std::strncmp(row + keys[i].offset, names[i], std::strlen(names[i])), 0);
+    offset += keys[i].length + PLOT_LEGEND_ENTRY_GAP;
+  }
+
+  // Right aligned legends: the whole row is anchored at the right edge when the
+  // chart has room for it.
+  const unsigned chart_cols = needed + 13u;
+  needed = nvtop_format_plot_legend_row(row, chart_cols + 1u, MAX_LINES_PER_PLOT, legend, keys, MAX_LINES_PER_PLOT);
+  const unsigned start = chart_cols - needed;
+  EXPECT_EQ(start + keys[MAX_LINES_PER_PLOT - 1u].offset + keys[MAX_LINES_PER_PLOT - 1u].length, chart_cols);
+
+  // A chart too narrow for the row: the entries are cut inside the chart, and
+  // nothing is written past it.
+  const unsigned narrow_cols = 20u;
+  needed = nvtop_format_plot_legend_row(row, narrow_cols + 1u, MAX_LINES_PER_PLOT, legend, keys, MAX_LINES_PER_PLOT);
+  EXPECT_GT(needed, narrow_cols);
+  EXPECT_LE(std::strlen(row), narrow_cols);
+  for (unsigned i = 0; i < MAX_LINES_PER_PLOT; ++i) {
+    if (keys[i].length == 0u)
+      continue;
+    EXPECT_LE(keys[i].offset + keys[i].length, std::strlen(row));
+  }
+}
+
+// The package power: the counter semantics, and everything that keeps an
+// untrustworthy power out of the interface. The helpers are pure, so this is
+// checked on machines that have no readable energy counter at all.
+TEST(HostPackagePower, EnergyCounterDeltaIsWatts) {
+  host_power_sample previous = {1000000000u, 1000000000000u};
+  host_power_sample current = {1100000000u, 1000000000000u};
+  double watts = 0.;
+
+  // 100 J over a second of interval is 100W.
+  ASSERT_TRUE(host_power_watts_between(&previous, &current, 1., &watts));
+  EXPECT_TRUE(nearly(watts, 100.));
+  ASSERT_TRUE(host_power_watts_between(&previous, &current, 10., &watts));
+  EXPECT_TRUE(nearly(watts, 10.));
+
+  // The counter wrapping at its max energy range is the normal way of counting.
+  previous.energy_uj = 999999000000u;
+  current.energy_uj = 1000000u;
+  ASSERT_TRUE(host_power_watts_between(&previous, &current, 1., &watts));
+  EXPECT_TRUE(nearly(watts, 2.));
+
+  // What the parsers accept, and what they do not.
+  uint64_t counter = 0u;
+  EXPECT_TRUE(host_power_parse_energy_uj_text("1099511627775\n", &counter));
+  EXPECT_EQ(counter, 1099511627775u);
+  EXPECT_FALSE(host_power_parse_energy_uj_text("0\n", &counter)); // no energy reported
+  EXPECT_FALSE(host_power_parse_energy_uj_text("42 watts\n", &counter));
+  EXPECT_FALSE(host_power_parse_energy_uj_text("-1\n", &counter));
+  EXPECT_FALSE(host_power_parse_energy_uj_text("18446744073709551615\n", &counter));
+  EXPECT_FALSE(host_power_parse_energy_uj_text("", &counter));
+  EXPECT_FALSE(host_power_parse_energy_uj_text(nullptr, &counter));
+
+  EXPECT_TRUE(host_power_parse_hwmon_input_text("12345678\n", &watts)); // microwatts
+  EXPECT_TRUE(nearly(watts, 12.345678));
+  EXPECT_FALSE(host_power_parse_hwmon_input_text("0\n", &watts));
+  EXPECT_FALSE(host_power_parse_hwmon_input_text("1001000000\n", &watts)); // no such package
+  EXPECT_FALSE(host_power_parse_hwmon_input_text("-5\n", &watts));
+}
+
+TEST(HostPackagePower, NothingTrustworthyIsNotZeroWatts) {
+  host_power_sample sample = {1000000000u, 1000000000000u};
+  host_power_sample moved = {1100000000u, 1000000000000u};
+  double watts = 42.;
+
+  // A first sample, no elapsed time, or a counter that did not move.
+  EXPECT_FALSE(host_power_watts_between(nullptr, &moved, 1., &watts));
+  EXPECT_FALSE(host_power_watts_between(&sample, nullptr, 1., &watts));
+  EXPECT_FALSE(host_power_watts_between(&sample, &moved, 0., &watts));
+  EXPECT_FALSE(host_power_watts_between(&sample, &moved, -1., &watts));
+  EXPECT_FALSE(host_power_watts_between(&sample, &sample, 1., &watts));
+  EXPECT_FALSE(host_power_watts_between(&sample, &moved, 1., nullptr));
+  EXPECT_TRUE(nearly(watts, 42.)); // untouched
+
+  // A counter reset, or another counter: no wrap explains the decrease.
+  host_power_sample reset = {1000000u, 1000000000000u};
+  EXPECT_FALSE(host_power_watts_between(&moved, &reset, 1., &watts));
+
+  // A wrap that adds up to a power no package draws.
+  host_power_sample near_wrap = {999000000000u, 1000000000000u};
+  EXPECT_FALSE(host_power_watts_between(&near_wrap, &reset, 1., &watts));
+
+  // Two samples of two different counters, or a counter outside its own range.
+  host_power_sample other_range = {1000000000u, 2000000000000u};
+  EXPECT_FALSE(host_power_watts_between(&other_range, &moved, 1., &watts));
+  host_power_sample no_range = {1000000000u, 0u};
+  EXPECT_FALSE(host_power_watts_between(&no_range, &moved, 1., &watts));
+  host_power_sample past_range = {1000000000001u, 1000000000000u};
+  EXPECT_FALSE(host_power_watts_between(&sample, &past_range, 1., &watts));
+
+  // A package that reports no energy at all reports no power.
+  host_power_sample empty_counter = {0u, 1000000000000u};
+  EXPECT_FALSE(host_power_watts_between(&empty_counter, &moved, 1., &watts));
+}
+
+TEST(HostPackagePower, SourcesAreFoundByTheNamesTheyDeclare) {
+  char name[32] = {};
+  EXPECT_TRUE(host_power_parse_zone_name_text("package-0\r\n", name, sizeof(name)));
+  EXPECT_STREQ(name, "package-0");
+  EXPECT_TRUE(host_power_parse_zone_name_text("  package-1 \n", name, sizeof(name)));
+  EXPECT_STREQ(name, "package-1");
+  EXPECT_FALSE(host_power_parse_zone_name_text(" \n", name, sizeof(name)));
+
+  unsigned index = 9u;
+  EXPECT_TRUE(host_power_zone_name_index("package-2", &index));
+  EXPECT_EQ(index, 2u);
+  EXPECT_TRUE(host_power_zone_name_index("pkg-1", &index));
+  EXPECT_EQ(index, 1u);
+  EXPECT_TRUE(host_power_zone_name_index("PACKAGE", &index));
+  EXPECT_EQ(index, 0u);
+  EXPECT_TRUE(host_power_zone_name_is_package("amd"));
+  EXPECT_TRUE(host_power_zone_name_is_package("soc-0"));
+  // The sub zones of a package are not the package.
+  EXPECT_FALSE(host_power_zone_name_is_package("core"));
+  EXPECT_FALSE(host_power_zone_name_is_package("dram"));
+  EXPECT_FALSE(host_power_zone_name_is_package("uncore"));
+  EXPECT_FALSE(host_power_zone_name_is_package("platform"));
+  EXPECT_FALSE(host_power_zone_name_is_package("package-x"));
+  EXPECT_FALSE(host_power_zone_name_is_package("package-0:core"));
+  EXPECT_FALSE(host_power_zone_name_is_package(nullptr));
+
+  EXPECT_TRUE(host_power_hwmon_label_is_package("Package"));
+  EXPECT_TRUE(host_power_hwmon_label_is_package("Pkg"));
+  EXPECT_TRUE(host_power_hwmon_label_is_package("VDDPKG"));
+  EXPECT_FALSE(host_power_hwmon_label_is_package("Vcore"));
+  EXPECT_FALSE(host_power_hwmon_label_is_package(""));
+  EXPECT_FALSE(host_power_hwmon_label_is_package(nullptr));
+}
+
+// The package power field of the CPU detail block, and the title colors the
+// interface draws from the reported spans.
+TEST(HostDetailBlock, PackagePowerFieldAndTitles) {
+  host_metrics_state state = {};
+  char line[512] = {};
+  host_detail_field fields[HOST_DETAIL_FIELD_MAX] = {};
+
+  state.cpu_valid = true;
+  state.cpu_percent = 12.5;
+  state.power_valid = true;
+  state.package_power_watts = 15.5;
+  EXPECT_GT(host_metrics_format_detail_line(&state, 1u, 162u, line, sizeof(line)), 0u);
+  EXPECT_NE(std::strstr(line, "POWER 15.5W"), nullptr);
+
+  // An unknown power reads N/A, never the 0W the zeroed state would suggest.
+  state.power_valid = false;
+  EXPECT_GT(host_metrics_format_detail_line(&state, 1u, 162u, line, sizeof(line)), 0u);
+  EXPECT_NE(std::strstr(line, "POWER N/A"), nullptr);
+  EXPECT_EQ(std::strstr(line, "POWER 0.0W"), nullptr);
+  state.power_valid = true;
+
+  // The titles of the line, with the columns the interface colors cyan.
+  host_metrics_format_detail_line_fields(&state, 1u, 162u, line, sizeof(line), fields, HOST_DETAIL_FIELD_MAX);
+  const char *expected[] = {"CPU", "FREQ", "LOAD", "POWER"};
+  unsigned reported = 0u;
+  for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    if (fields[i].length == 0u)
+      continue;
+    // One title per field of the line, in line order, and nothing past the
+    // fields the line has.
+    ASSERT_LT(reported, sizeof(expected) / sizeof(expected[0]));
+    ASSERT_LE(fields[i].offset + fields[i].length, std::strlen(line));
+    const std::string title(line + fields[i].offset, fields[i].length);
+    EXPECT_EQ(title, expected[reported]) << title;
+    ++reported;
+  }
+  EXPECT_EQ(reported, 4u);
+
+  // A narrow line drops the power: a title that is not in the line is not
+  // reported, so it cannot be colored over a value.
+  host_metrics_format_detail_line_fields(&state, 1u, 8u, line, sizeof(line), fields, HOST_DETAIL_FIELD_MAX);
+  EXPECT_EQ(std::strlen(line), 8u);
+  EXPECT_EQ(fields[0].offset, 0u);
+  EXPECT_EQ(fields[0].length, std::strlen("CPU"));
+  EXPECT_EQ(std::strncmp(line + fields[0].offset, "CPU", fields[0].length), 0);
+  for (unsigned i = 1u; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    // Nothing else of the line is a title: the fields that did not fit are
+    // gone, and a value is never colored as if it were a title.
+    EXPECT_EQ(fields[i].length, 0u);
+  }
 }
 
 TEST(HostMetricsState, InvalidStatesAreNotZeroLoad) {

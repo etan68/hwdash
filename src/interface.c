@@ -575,19 +575,16 @@ static unsigned populate_host_plot_data(const struct nvtop_interface *interface,
   for (size_t i = 0; i < plot_win->num_data; ++i)
     plot_win->data[i] = NAN;
 
-  int plot_cols = getmaxx(plot_win->plot_window);
-
   unsigned in_processing = 0;
   for (unsigned i = 0; i < host_metric_count && in_processing < num_lines; ++i) {
     enum host_metric metric = (enum host_metric)i;
     if (!host_metric_enabled(interface, metric))
       continue;
 
-    // Legend of the line, shortened when the detailed one does not fit.
-    unsigned needed =
-        host_metrics_format_legend(state, metric, false, plot_legend[in_processing], PLOT_MAX_LEGEND_SIZE);
-    if ((int)needed > plot_cols - 1)
-      host_metrics_format_legend(state, metric, true, plot_legend[in_processing], PLOT_MAX_LEGEND_SIZE);
+    // The legend of a line is a key that says which metric it is, exactly like
+    // the GPU chart legends: the current values, available or not, belong to
+    // the detail block right above the chart, not to the chart itself.
+    snprintf(plot_legend[in_processing], PLOT_MAX_LEGEND_SIZE, "%s", host_metric_legend_name(metric));
 
     // The histories are stored once per interface refresh, like the GPU data
     // in the interface ring buffer.
@@ -610,6 +607,9 @@ static unsigned populate_host_plot_data(const struct nvtop_interface *interface,
 // sampled CPU utilization and the same memory usage, so that the block and the
 // chart can never disagree. Each line is printed with mvwaddnstr, so that a
 // narrow terminal truncates it instead of wrapping it over the next section.
+// The field titles are colored the way the GPU detail blocks color theirs - the
+// same cyan, and only on the titles - with mvwchgat, so that the values keep
+// the normal terminal color.
 static void draw_host_detail(struct nvtop_interface *interface) {
   WINDOW *win = interface->host_detail_window;
   if (!win)
@@ -621,18 +621,21 @@ static void draw_host_detail(struct nvtop_interface *interface) {
   werase(win);
   char line[512];
   for (unsigned line_index = 0; line_index < HOST_DETAIL_LINE_COUNT; ++line_index) {
-    host_metrics_format_detail_line(state, line_index, cols_of_win, line, sizeof(line));
-    if (line_index == 0) {
-      // "Device CPU" in the color of the GPU device names, the rest in the
-      // default color, like the GPU detail blocks do.
-      wcolor_set(win, cyan_color, NULL);
-      mvwaddnstr(win, (int)line_index, 0, line, 10 < (int)strlen(line) ? 10 : (int)strlen(line));
-      wstandend(win);
-      const unsigned past = 10;
-      if (strlen(line) > past)
-        mvwaddnstr(win, (int)line_index, (int)past, line + past, (int)(strlen(line + past)));
-    } else {
-      mvwaddnstr(win, (int)line_index, 0, line, (int)strlen(line));
+    // The titles come back from the formatter with the line: where each of them
+    // landed, and only for the ones that made it into the line.
+    struct host_detail_field fields[HOST_DETAIL_FIELD_MAX];
+    host_metrics_format_detail_line_fields(state, line_index, cols_of_win, line, sizeof(line), fields,
+                                           HOST_DETAIL_FIELD_MAX);
+    mvwaddnstr(win, (int)line_index, 0, line, (int)strlen(line));
+    for (unsigned field = 0; field < HOST_DETAIL_FIELD_MAX; ++field) {
+      if (fields[field].length == 0 || fields[field].offset >= cols_of_win)
+        continue;
+      // The formatter never reports a title past the width it was given, but a
+      // window narrower than the line it was built for stays possible.
+      unsigned length = fields[field].length;
+      if (fields[field].offset + length > cols_of_win)
+        length = cols_of_win - fields[field].offset;
+      mvwchgat(win, (int)line_index, (int)fields[field].offset, (int)length, 0, cyan_color, NULL);
     }
   }
   wnoutrefresh(win);

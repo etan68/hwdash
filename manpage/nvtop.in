@@ -74,6 +74,13 @@ of the visible charts share the available vertical space equally. The CPU chart 
 chart: same size rules, same \fB0/25/50/75/100\fR scale, same border, same time axis and same
 resize behaviour.
 .TP
+The legend of a chart is the key of a curve, not a readout of it. All the entries of a chart are
+drawn on a single row, horizontally, in plot line order, and every entry carries a short \fB---\fR
+swatch: the text and the swatch of an entry use the color of the plot line they stand for, so a GPU
+chart reads \fBGPU0 % ---    GPU0 mem% ---\fR and the CPU chart \fBCPU % ---    RAM % ---\fR. A
+legend never shows the current value of its metric, which the detail block above the chart already
+shows; a row that does not fit a narrow chart is cut, never wrapped.
+.TP
 On a small terminal that cannot give the minimum chart height to every device, whole device
 sections are left out, in a fixed order: the \fBCPU device first\fR, then the \fBGPU device sections
 from the highest index to the lowest\fR. A GPU section that is left out has neither a detail block
@@ -83,21 +90,32 @@ comes back as soon as the terminal is tall enough again.
 .TP
 The CPU utilization is the difference between two successive samples of the aggregate
 \fI/proc/stat\fR counters (\fBidle\fR and \fBiowait\fR count as idle time, \fBguest\fR and
-\fBguest_nice\fR are excluded to avoid double counting). Memory usage is \fBMemTotal - MemAvailable\fR
-read from \fI/proc/meminfo\fR; the legend shows used/total GiB and the percentage, or a shorter
-legend when the chart is narrow. Data that cannot be read, including \fBMemAvailable\fR larger than
-\fBMemTotal\fR, displays \fBN/A\fR and leaves a hole in the curve: it is never plotted as a zero.
+\fBguest_nice\fR are excluded to avoid double counting). Memory usage is \fBMemTotal -
+MemAvailable\fR read from \fI/proc/meminfo\fR. Data that cannot be read, including
+\fBMemAvailable\fR larger than \fBMemTotal\fR, displays \fBN/A\fR in the detail block and leaves a
+hole in the curve: it is never plotted as a zero.
 Both lines are disabled by default on the other platforms.
 .TP
 The detail block above the CPU chart reads \fBDevice CPU [model] CORES physicalC/logicalT\fR, then
-the CPU utilization, the average CPU frequency and the 1/5/15 minute load averages, then the memory
-used/total, the memory percentage, the available memory and the swap used/total. The model and the
-core counts come from \fI/proc/cpuinfo\fR and \fI/sys/devices/system/cpu\fR, the frequency from the
-\fIcpuinfo_cur_freq\fR and \fIscaling_cur_freq\fR sysfs entries, the load averages from
-\fI/proc/loadavg\fR and the swap from \fI/proc/meminfo\fR, all refreshed with the normal update
-interval. Unavailable data reads \fBN/A\fR. On a narrow terminal the block drops the swap first,
-then the 5 and 15 minute load averages, then the available memory, and truncates an overlong CPU
-model: the CPU utilization and the memory used/total/percentage stay as long as the block fits.
+the CPU utilization, the average CPU frequency, the 1/5/15 minute load averages and the power of the
+CPU package in watts, then the memory used/total, the memory percentage, the available memory and
+the swap used/total. The model and the core counts come from \fI/proc/cpuinfo\fR and
+\fI/sys/devices/system/cpu\fR, the frequency from the \fIcpuinfo_cur_freq\fR and
+\fIscaling_cur_freq\fR sysfs entries, the load averages from \fI/proc/loadavg\fR, the swap from
+\fI/proc/meminfo\fR and the package power from the standard power interfaces of the kernel: the
+powercap (RAPL) zone declaring the package (\fBpackage\fR, \fBpkg\fR, \fBsoc\fR or the AMD \fBamd\fR
+domain, found by its \fIname\fR and not at a fixed path), whose \fIenergy_uj\fR delta over the
+elapsed monotonic time gives the watts, or, where there is no such zone, an hwmon \fIpower*_input\fR
+sensor whose \fIpower*_label\fR says it is the package. No raw MSR access and no external tool are
+used, so a machine whose kernel exposes no readable counter to this process shows \fBPOWER N/A\fR:
+an energy counter needs two trustworthy samples before it means anything, and a counter reset, a
+wrap adding up to an impossible power, a malformed file or a zone that disappears all read \fBN/A\fR
+and never a made up \fB0.0W\fR. The titles of the fields are highlighted in the color of the GPU
+detail block titles, the values in the normal color. Unavailable data reads \fBN/A\fR. On a narrow
+terminal the block drops the swap first, then the 15 and 5 minute load averages, then the available
+memory, then the package power, then the frequency and the static CPU information, and truncates an
+overlong CPU model: the CPU utilization and the memory used/total/percentage stay as long as the
+block fits.
 .TP
 The two options are saved with \fBF12\fR in the \fB[GeneralOption]\fR section of \fIinterface.ini\fR
 as \fBShowHostCpuUsage\fR and \fBShowHostMemUsage\fR.

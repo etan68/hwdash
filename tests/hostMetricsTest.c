@@ -202,71 +202,40 @@ static void test_memory_usage(void) {
   CHECK(!host_memory_usage(&full, NULL, &total, &percent));
 }
 
-// The legends of the combined host chart. Same buffer size as the chart legends.
+// The legend keys of the combined host chart, at the width of the chart legend
+// slots. A legend says which curve is which metric and nothing else, exactly
+// like the GPU chart legends: the current values belong to the detail block.
 #define LEGEND_BUFFER_SIZE 35u
 
-static void test_legends(void) {
-  struct host_metrics_state state;
-  char buffer[LEGEND_BUFFER_SIZE];
-
-  CHECK(host_metrics_init(&state, 32u));
-
+static void test_legend_keys(void) {
   CHECK(strcmp(host_metric_name(host_metric_cpu), "CPU") == 0);
   CHECK(strcmp(host_metric_name(host_metric_memory), "RAM") == 0);
 
-  // Nothing sampled yet: both lines must say N/A, never an idle zero.
-  CHECK(host_metrics_format_legend(&state, host_metric_cpu, false, buffer, sizeof(buffer)) == 7u);
-  CHECK(strcmp(buffer, "CPU N/A") == 0);
-  CHECK(host_metrics_format_legend(&state, host_metric_memory, false, buffer, sizeof(buffer)) == 7u);
-  CHECK(strcmp(buffer, "RAM N/A") == 0);
-  CHECK(host_metrics_format_legend(&state, host_metric_memory, true, buffer, sizeof(buffer)) == 7u);
-  CHECK(strcmp(buffer, "RAM N/A") == 0);
-  // An unavailable host state is reported the same way.
-  CHECK(host_metrics_format_legend(NULL, host_metric_cpu, false, buffer, sizeof(buffer)) == 7u);
-  CHECK(strcmp(buffer, "CPU N/A") == 0);
+  // The key of the CPU line and the key of the memory line: a unit, no value.
+  CHECK(strcmp(host_metric_legend_name(host_metric_cpu), "CPU %") == 0);
+  CHECK(strcmp(host_metric_legend_name(host_metric_memory), "RAM %") == 0);
+  CHECK(strlen(host_metric_legend_name(host_metric_cpu)) < LEGEND_BUFFER_SIZE);
+  CHECK(strlen(host_metric_legend_name(host_metric_memory)) < LEGEND_BUFFER_SIZE);
 
+  // The keys do not depend on the state: a metric that is not available yet, or
+  // not available anymore, keeps the same key. Its value, or the lack of it, is
+  // what the detail block says.
+  struct host_metrics_state state;
+  CHECK(host_metrics_init(&state, 32u));
+  CHECK(strcmp(host_metric_legend_name(host_metric_cpu), "CPU %") == 0);
   state.cpu_valid = true;
   state.cpu_percent = 42.5;
-  CHECK(host_metrics_format_legend(&state, host_metric_cpu, false, buffer, sizeof(buffer)) == 9u);
-  CHECK(strcmp(buffer, "CPU 42.5%") == 0);
-  // The cpu legend has no detailed form to fall back from.
-  CHECK(host_metrics_format_legend(&state, host_metric_cpu, true, buffer, sizeof(buffer)) == 9u);
-  CHECK(strcmp(buffer, "CPU 42.5%") == 0);
-
   state.memory_valid = true;
   state.memory_used_gib = 12.;
   state.memory_total_gib = 16.;
   state.memory_percent = 75.;
-  unsigned detailed =
-      host_metrics_format_legend(&state, host_metric_memory, false, buffer, sizeof(buffer));
-  CHECK(strcmp(buffer, "RAM 12.00/16.00 GiB 75.0%") == 0);
-  unsigned short_form = host_metrics_format_legend(&state, host_metric_memory, true, buffer, sizeof(buffer));
-  CHECK(strcmp(buffer, "RAM 75.0%") == 0);
-  // The short form is what the narrow charts fall back to.
-  CHECK(short_form < detailed);
-  CHECK(short_form < LEGEND_BUFFER_SIZE);
-
-  // Like snprintf, the return value tells the caller that the detailed form
-  // did not fit, and the buffer stays a valid string.
-  char small[12];
-  CHECK(host_metrics_format_legend(&state, host_metric_memory, false, small, sizeof(small)) == detailed);
-  CHECK(strlen(small) == sizeof(small) - 1);
-  CHECK(host_metrics_format_legend(&state, host_metric_memory, true, small, sizeof(small)) == short_form);
-  CHECK(strcmp(small, "RAM 75.0%") == 0);
-
-  // Memory that went back to N/A after being available must not keep a stale
-  // percentage either.
-  state.memory_valid = false;
-  CHECK(host_metrics_format_legend(&state, host_metric_memory, true, buffer, sizeof(buffer)) == 7u);
-  CHECK(strcmp(buffer, "RAM N/A") == 0);
-
-  // Unusable input.
-  CHECK(host_metrics_format_legend(&state, host_metric_count, false, buffer, sizeof(buffer)) == 8u);
-  CHECK(strcmp(buffer, "Host N/A") == 0);
-  CHECK(host_metrics_format_legend(&state, host_metric_cpu, false, NULL, sizeof(buffer)) == 0u);
-  CHECK(host_metrics_format_legend(&state, host_metric_cpu, false, buffer, 0u) == 0u);
-
+  CHECK(strcmp(host_metric_legend_name(host_metric_cpu), "CPU %") == 0);
+  CHECK(strcmp(host_metric_legend_name(host_metric_memory), "RAM %") == 0);
+  CHECK(strchr(host_metric_legend_name(host_metric_memory), '0') == NULL);
   host_metrics_release(&state);
+
+  // An unknown metric still yields a key rather than an empty string.
+  CHECK(strcmp(host_metric_legend_name(host_metric_count), "Host %") == 0);
 }
 
 static void test_cpu_identity(void) {
@@ -483,6 +452,8 @@ static void fill_detail_state(struct host_metrics_state *state) {
   state->swap_valid = true;
   state->swap_used_gib = 0.50;
   state->swap_total_gib = 8.;
+  state->power_valid = true;
+  state->package_power_watts = 15.5;
   state->identity_valid = true;
   state->identity.model_valid = true;
   snprintf(state->identity.model, sizeof(state->identity.model), "%s", "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz");
@@ -516,9 +487,10 @@ static void test_detail_block(void) {
         strlen("Device CPU [Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz]  CORES 6C/12T"));
   CHECK(strcmp(line, "Device CPU [Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz]  CORES 6C/12T") == 0);
   CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
-        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35"));
-  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35") == 0);
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W"));
+  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W") == 0);
   CHECK(strstr(line, "LOAD 0.42 / 0.38 / 0.35") != NULL);
+  CHECK(strstr(line, "POWER 15.5W") != NULL);
   CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
         strlen("RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB   SWAP 0.50/8.00 GiB"));
   CHECK(strstr(line, "RAM  3.21/31.26 GiB 10.3%") == line);
@@ -526,17 +498,27 @@ static void test_detail_block(void) {
   CHECK(strstr(line, "SWAP 0.50/8.00 GiB") != NULL);
 
   // Nothing but the utilization lines is kept when the terminal gets narrow,
-  // and the fields go in the responsive order: the swap first, then the 5 and
-  // 15 minute load averages, then the available memory, then the static
-  // information.
+  // and, on each line, the fields go in the responsive order: the swap before
+  // the available memory, the 15 minute load average before the 5 minute one,
+  // and the package power before the static CPU information.
   const unsigned width_no_swap = first_width_without(&state, 2u, "SWAP");
   const unsigned width_no_load15 = first_width_without(&state, 1u, "/ 0.35");
   const unsigned width_no_load5 = first_width_without(&state, 1u, "/ 0.38");
   const unsigned width_no_avail = first_width_without(&state, 2u, "AVAIL");
+  const unsigned width_no_power = first_width_without(&state, 1u, "POWER");
+  const unsigned width_no_freq = first_width_without(&state, 1u, "FREQ");
   CHECK(width_no_swap > 0u && width_no_load15 > 0u && width_no_load5 > 0u && width_no_avail > 0u);
-  CHECK(width_no_swap > width_no_load15);  // The swap is the first to go,
-  CHECK(width_no_load15 > width_no_load5); // then the load averages,
-  CHECK(width_no_load5 > width_no_avail);  // then the available memory.
+  CHECK(width_no_swap > width_no_avail);   // On the memory line, the swap goes
+                                           // before the available memory,
+  CHECK(width_no_load15 > width_no_load5); // and on the CPU line the load
+                                           // averages go newest last,
+  CHECK(width_no_load5 > width_no_power);  // then the package power,
+  CHECK(width_no_power > width_no_freq);   // then the static information.
+  // Where the power had to go, the CPU utilization is still there: the fields
+  // that carry it are never dropped.
+  first_width_without(&state, 1u, "POWER");
+  CHECK(strstr(first_width_buffer, "CPU  12.5%") != NULL);
+  CHECK(strstr(first_width_buffer, "POWER") == NULL);
 
   // The static information is what survives the longest after the utilization:
   // a line narrower than the model still shows the device line, and the model
@@ -567,7 +549,7 @@ static void test_detail_block(void) {
   host_metrics_format_detail_line(&unknown, 0u, DETAIL_WIDTH, line, sizeof(line));
   CHECK(strcmp(line, "Device CPU [N/A]  CORES N/A/N/A") == 0);
   host_metrics_format_detail_line(&unknown, 1u, DETAIL_WIDTH, line, sizeof(line));
-  CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A") == 0);
+  CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A   POWER N/A") == 0);
   host_metrics_format_detail_line(&unknown, 2u, DETAIL_WIDTH, line, sizeof(line));
   CHECK(strcmp(line, "RAM  N/A   SWAP N/A") == 0);
 
@@ -592,6 +574,253 @@ static void test_detail_block(void) {
   CHECK(host_metrics_format_detail_line(&state, 0u, DETAIL_WIDTH, NULL, 0u) == 0u);
   CHECK(host_metrics_format_detail_line(NULL, 0u, DETAIL_WIDTH, line, sizeof(line)) > 0u);
   CHECK(strcmp(line, "Device CPU [N/A]  CORES N/A/N/A") == 0);
+}
+
+// The text a reported title points at, so that what the interface is going to
+// color can be checked against the line it was computed with.
+static void reported_title_text(const char *line, const struct host_detail_field *field, char *out, size_t size) {
+  if (size == 0)
+    return;
+  out[0] = '\0';
+  if (!field || field->length == 0u)
+    return;
+  if ((size_t)field->offset + (size_t)field->length > strlen(line))
+    return; // A title past the line the caller got: it is not in it.
+  size_t length = field->length < size - 1u ? field->length : size - 1u;
+  memcpy(out, line + field->offset, length);
+  out[length] = '\0';
+}
+
+static unsigned reported_title_count(const struct host_detail_field *fields, const char *line) {
+  unsigned count = 0u;
+  char text[32];
+  for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    reported_title_text(line, &fields[i], text, sizeof(text));
+    if (text[0] != '\0')
+      ++count;
+  }
+  return count;
+}
+
+static bool reported_title_is(const struct host_detail_field *fields, const char *line, const char *title) {
+  char text[32];
+  for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    reported_title_text(line, &fields[i], text, sizeof(text));
+    if (text[0] != '\0' && strcmp(text, title) == 0)
+      return true;
+  }
+  return false;
+}
+
+// The titles of the CPU detail block and the columns they occupy: the interface
+// colors exactly those, the way the GPU detail blocks color theirs, and leaves
+// the values in the normal color.
+static void test_detail_field_titles(void) {
+  struct host_metrics_state state;
+  char line[512];
+  struct host_detail_field fields[HOST_DETAIL_FIELD_MAX];
+
+  fill_detail_state(&state);
+
+  // Everything known: the titles of the three lines are the field names.
+  CHECK(host_metrics_format_detail_line_fields(&state, 0u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 2u);
+  CHECK(fields[0].offset == 0u); // "Device CPU" starts the line
+  CHECK(fields[0].length == strlen("Device CPU"));
+  CHECK(reported_title_is(fields, line, "Device CPU"));
+  CHECK(reported_title_is(fields, line, "CORES"));
+  // The model name of this CPU contains the "CPU" title of another line: the
+  // titles are the fields, not whatever text happens to look like one, so the
+  // only titles of this line are the two that were reported.
+  CHECK(strstr(line, "CPU @ 2.60GHz") != NULL);
+
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 4u);
+  CHECK(reported_title_is(fields, line, "CPU"));
+  CHECK(reported_title_is(fields, line, "FREQ"));
+  CHECK(reported_title_is(fields, line, "LOAD"));
+  CHECK(reported_title_is(fields, line, "POWER"));
+
+  CHECK(host_metrics_format_detail_line_fields(&state, 2u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 3u);
+  CHECK(reported_title_is(fields, line, "RAM"));
+  CHECK(reported_title_is(fields, line, "AVAIL"));
+  CHECK(reported_title_is(fields, line, "SWAP"));
+
+  // A narrow line: the fields that were dropped have no title left to color, and
+  // no reported title reaches past the line that was written.
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, 8u, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) > 8u);
+  CHECK(strlen(line) == 8u);
+  CHECK(reported_title_count(fields, line) == 1u);
+  CHECK(fields[0].offset == 0u && fields[0].length == strlen("CPU"));
+  CHECK(!reported_title_is(fields, line, "POWER"));
+
+  // Unknown values keep their titles: N/A is a value of the field it belongs to.
+  struct host_metrics_state unknown;
+  memset(&unknown, 0, sizeof(unknown));
+  CHECK(host_metrics_format_detail_line_fields(&unknown, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 4u);
+  CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A   POWER N/A") == 0);
+
+  // Unusable input: the titles are optional.
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), NULL, 0u) ==
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W"));
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields, 0u) ==
+        strlen(line));
+  CHECK(host_metrics_format_detail_line_fields(&state, HOST_DETAIL_LINE_COUNT, DETAIL_WIDTH, line, sizeof(line),
+                                               fields, HOST_DETAIL_FIELD_MAX) == 0u);
+}
+
+// The package power: the counters, the wrap around, and everything that makes a
+// power untrustworthy. The parsers are pure, so all of this is checked whether
+// or not the machine the test runs on exposes an energy counter.
+static void test_package_power(void) {
+  uint64_t counter = 12345;
+
+  // The content of an energy_uj or max_energy_range_uj file.
+  CHECK(host_power_parse_energy_counter_text("1099511627775\n", &counter));
+  CHECK(counter == 1099511627775ull);
+  CHECK(host_power_parse_energy_uj_text("  42\n", &counter));
+  CHECK(counter == 42u);
+  CHECK(host_power_parse_energy_uj_text("0\n", &counter) == false); // no energy reported
+  CHECK(host_power_parse_energy_counter_text("0\n", &counter));     // a range may be odd, not this
+  CHECK(!host_power_parse_energy_uj_text("", &counter));
+  CHECK(!host_power_parse_energy_uj_text("   \n", &counter));
+  CHECK(!host_power_parse_energy_uj_text("not a counter\n", &counter));
+  CHECK(!host_power_parse_energy_uj_text("-12\n", &counter));
+  CHECK(!host_power_parse_energy_uj_text("12345678901234567890123456789\n", &counter));
+  CHECK(!host_power_parse_energy_uj_text("18446744073709551615\n", &counter));
+  CHECK(!host_power_parse_energy_uj_text("42 joules\n", &counter)); // trailing text
+  CHECK(!host_power_parse_energy_uj_text(NULL, &counter));
+  CHECK(!host_power_parse_energy_uj_text("42\n", NULL));
+  CHECK(!host_power_parse_energy_counter_text("42\n", NULL));
+
+  // The zone names. The package is found by its name, not by a fixed path.
+  char name[32];
+  CHECK(host_power_parse_zone_name_text("package-0\n", name, sizeof(name)));
+  CHECK(strcmp(name, "package-0") == 0);
+  CHECK(host_power_parse_zone_name_text("  package-1 \r\n", name, sizeof(name)));
+  CHECK(strcmp(name, "package-1") == 0);
+  CHECK(!host_power_parse_zone_name_text("", name, sizeof(name)));
+  CHECK(!host_power_parse_zone_name_text(" \n", name, sizeof(name)));
+  CHECK(!host_power_parse_zone_name_text(NULL, name, sizeof(name)));
+  CHECK(!host_power_parse_zone_name_text("package-0\n", name, 0u));
+
+  unsigned index = 7u;
+  CHECK(host_power_zone_name_index("package-0", &index) && index == 0u);
+  CHECK(host_power_zone_name_index("package-2", &index) && index == 2u);
+  CHECK(host_power_zone_name_index("PACKAGE-1", &index) && index == 1u);
+  CHECK(host_power_zone_name_index("package", &index) && index == 0u);
+  CHECK(host_power_zone_name_index("pkg-1", &index) && index == 1u);
+  CHECK(host_power_zone_name_index("soc-0", &index) && index == 0u);
+  CHECK(host_power_zone_name_index("amd", &index) && index == 0u);
+  CHECK(!host_power_zone_name_index("core", &index));   // a sub zone of a package
+  CHECK(!host_power_zone_name_index("dram", &index));   // is not the package
+  CHECK(!host_power_zone_name_index("uncore", &index));
+  CHECK(!host_power_zone_name_index("platform", &index));
+  CHECK(!host_power_zone_name_index("package-x", &index));  // no plain index
+  CHECK(!host_power_zone_name_index("package-", &index));
+  CHECK(!host_power_zone_name_index("package-0:core", &index));
+  CHECK(!host_power_zone_name_index("cpu", &index)); // the name of a core domain
+  CHECK(!host_power_zone_name_index("", &index));              // on some drivers
+  CHECK(!host_power_zone_name_index(NULL, &index));
+  CHECK(!host_power_zone_name_index("package-0", NULL));
+  CHECK(host_power_zone_name_is_package("package-1"));
+  CHECK(!host_power_zone_name_is_package("dram"));
+
+  // The hwmon labels: only a label that names the package may stand for it.
+  CHECK(host_power_hwmon_label_is_package("Package"));
+  CHECK(host_power_hwmon_label_is_package("package power"));
+  CHECK(host_power_hwmon_label_is_package("Pkg"));
+  CHECK(host_power_hwmon_label_is_package("VDDPKG"));
+  CHECK(host_power_hwmon_label_is_package("PCH + CPU Package"));
+  CHECK(!host_power_hwmon_label_is_package("Vcore"));
+  CHECK(!host_power_hwmon_label_is_package("+12V"));
+  CHECK(!host_power_hwmon_label_is_package(""));
+  CHECK(!host_power_hwmon_label_is_package(NULL));
+
+  // An hwmon power input is in microwatts.
+  double watts = 0.;
+  CHECK(host_power_parse_hwmon_input_text("12345678\n", &watts));
+  CHECK(nearly_equal(watts, 12.345678));
+  CHECK(host_power_parse_hwmon_input_text("1000000000\n", &watts)); // a kilowatt is a lot
+  CHECK(nearly_equal(watts, 1000.));
+  CHECK(!host_power_parse_hwmon_input_text("1001000000\n", &watts)); // past what a package draws
+  CHECK(host_power_parse_hwmon_input_text("0\n", &watts) == false);           // reports nothing
+  CHECK(!host_power_parse_hwmon_input_text("-5\n", &watts));
+  CHECK(!host_power_parse_hwmon_input_text("abc\n", &watts));
+  CHECK(!host_power_parse_hwmon_input_text(NULL, &watts));
+  CHECK(!host_power_parse_hwmon_input_text("5\n", NULL));
+
+  // The watts between two samples of an energy counter.
+  struct host_power_sample previous = {1000000000ull, 1000000000000ull};
+  struct host_power_sample current = {1100000000ull, 1000000000000ull};
+  CHECK(host_power_watts_between(&previous, &current, 1., &watts));
+  CHECK(nearly_equal(watts, 100.)); // 0.1 J over 0.1 s... 100 ms worth of 100W
+  CHECK(host_power_watts_between(&previous, &current, 10., &watts));
+  CHECK(nearly_equal(watts, 10.));
+  CHECK(host_power_watts_between(&previous, &current, 0.5, &watts));
+  CHECK(nearly_equal(watts, 200.));
+
+  // The counter wrapping at its max energy range is the normal way of counting.
+  previous.energy_uj = 999000000000ull;
+  current.energy_uj = 500000000ull;
+  // A wrap is only believable when what it adds up to is a believable power:
+  // 1500W of package is not, so this is a counter that changed and it is refused.
+  CHECK(!host_power_watts_between(&previous, &current, 1., &watts));
+  previous.energy_uj = 999000000000ull;
+  current.energy_uj = 500000000ull;
+  CHECK(host_power_watts_between(&previous, &current, 60., &watts)); // 1500J over a minute
+  CHECK(nearly_equal(watts, 25.));
+
+  previous.energy_uj = 999999000000ull;
+  current.energy_uj = 1000000ull;
+  CHECK(host_power_watts_between(&previous, &current, 1., &watts));
+  CHECK(nearly_equal(watts, 2.));
+
+  // A first sample, no elapsed time, or a counter that did not move: nothing to
+  // report, and in particular not the 0W an idle machine would never draw.
+  CHECK(!host_power_watts_between(NULL, &current, 1., &watts));
+  CHECK(!host_power_watts_between(&previous, NULL, 1., &watts));
+  CHECK(!host_power_watts_between(&previous, &current, 0., &watts));
+  CHECK(!host_power_watts_between(&previous, &current, -1., &watts));
+  CHECK(!host_power_watts_between(&previous, &current, 0. / 0., &watts));
+  CHECK(!host_power_watts_between(&previous, &previous, 1., &watts));
+  CHECK(!host_power_watts_between(&previous, &current, 1., NULL));
+  struct host_power_sample empty_counter = {0, 1000000000000ull};
+  CHECK(!host_power_watts_between(&empty_counter, &current, 1., &watts));
+  CHECK(!host_power_watts_between(&previous, &empty_counter, 1., &watts));
+  struct host_power_sample no_range = {previous.energy_uj, 0};
+  CHECK(!host_power_watts_between(&no_range, &current, 1., &watts));
+  struct host_power_sample other_range = {previous.energy_uj, 2000000000000ull};
+  CHECK(!host_power_watts_between(&other_range, &current, 1., &watts)); // another counter
+
+  // A decreasing counter that no wrap explains: a reset, a module reloaded, a
+  // zone that came back with another value. It would read as a huge burst.
+  previous.energy_uj = 500000000000ull;
+  current.energy_uj = 1000000ull;
+  CHECK(!host_power_watts_between(&previous, &current, 1., &watts));
+
+  // A counter past the range it declares is not a counter to trust.
+  previous.energy_uj = 1000000ull;
+  current.energy_uj = 1000000000001ull;
+  CHECK(!host_power_watts_between(&previous, &current, 1., &watts));
+
+  // A power no CPU package can draw is refused, not displayed.
+  previous.energy_uj = 1000000ull;
+  current.energy_uj = 1000000ull + 1000000000000ull - 1ull;
+  CHECK(!host_power_watts_between(&previous, &current, 1., &watts));
+
+  // What is left is a power: within the range of a real package.
+  previous.energy_uj = 1000000ull;
+  current.energy_uj = 1000000ull + 30000000ull; // 30 J
+  CHECK(host_power_watts_between(&previous, &current, 1., &watts));
+  CHECK(nearly_equal(watts, 30.));
 }
 
 static void test_history(void) {
@@ -643,6 +872,7 @@ static void test_history(void) {
 
 static void test_update_without_support(void) {
   struct host_metrics_state state;
+  char line[512];
   CHECK(host_metrics_init(&state, 32u));
   if (!host_metrics_platform_supported()) {
     // Unsupported platforms must report unavailable data, not a zero load.
@@ -650,9 +880,17 @@ static void test_update_without_support(void) {
     CHECK(!state.cpu_valid);
     CHECK(!state.memory_valid);
     CHECK(!state.supported);
+    // No host metrics at all means no package power either: the field reads N/A.
+    CHECK(!state.power_valid);
+    CHECK(host_metrics_format_detail_line(&state, 1u, 60u, line, sizeof(line)) > 0u);
+    CHECK(strstr(line, "POWER N/A") != NULL);
   } else {
     // On Linux the sample must either be valid or explicitly unavailable.
     host_metrics_update(&state);
+    // The power is either a plausible power or unavailable: never a zero that
+    // the machine was asked for and did not give.
+    if (state.power_valid)
+      CHECK(state.package_power_watts > 0. && state.package_power_watts <= HOST_POWER_MAX_PLAUSIBLE_WATTS);
     if (state.cpu_valid)
       CHECK(state.cpu_percent >= 0. && state.cpu_percent <= 100.);
     if (state.memory_valid) {
@@ -675,7 +913,9 @@ int main(void) {
   test_frequencies();
   test_swap();
   test_detail_block();
-  test_legends();
+  test_detail_field_titles();
+  test_package_power();
+  test_legend_keys();
   test_history();
   test_update_without_support();
   printf("%s: %u checks, %u failures\n", failures ? "FAILED" : "PASSED", checks, failures);

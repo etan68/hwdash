@@ -60,6 +60,24 @@ struct host_swap_info {
   uint64_t free_kib;
 };
 
+// The current power drawn by the CPU package, either from a powercap (RAPL)
+// energy counter, whose delta over the elapsed time is the power, or from a
+// hwmon package power input, which is already a power. An energy counter needs
+// two trustworthy samples to mean anything, so the power is reported only once
+// that is the case: it is never guessed and never shown as a fabricated zero.
+struct host_power_sample {
+  uint64_t energy_uj;    // Cumulative package energy, in microjoules
+  uint64_t max_range_uj; // Value the energy counter wraps at, in microjoules
+};
+
+// Largest power a CPU package can draw. Anything above it is not a package
+// that worked that hard but a counter that restarted, a zone that changed
+// under the sampling, or a malformed file.
+#define HOST_POWER_MAX_PLAUSIBLE_WATTS 1000.
+
+// Longest identity the probe gives a power source: a sysfs path.
+#define HOST_POWER_SOURCE_MAX_LENGTH 128u
+
 // Static identity of the whole host CPU. One package and one CPU is the
 // targeted case: the machine has a single model, a single core count and a
 // single thread count. A field that cannot be read stays invalid: it is
@@ -100,6 +118,24 @@ struct host_metrics_state {
   double swap_used_gib;
   double swap_total_gib;
   bool swap_valid;
+  // Power of the CPU package, in watts, valid only when power_valid: an
+  // unknown power reads N/A in the detail block, never 0W.
+  double package_power_watts;
+  bool power_valid;
+  // Previous sample of the package energy counter and the monotonic time it was
+  // taken at: the pair the watts are computed from.
+  struct host_power_sample last_power;
+  // Monotonic clock, in nanoseconds, at which last_power was taken. A plain
+  // count of nanoseconds rather than a clock type of the platform: this header
+  // is included by the C++ test files too.
+  uint64_t last_power_time_nsec;
+  bool has_last_power;
+  // Identity of the counter the previous sample came from. Another counter (a
+  // module reload, a zone that disappeared and came back, a probe that settles
+  // on another package) restarts the sampling: two samples of two different
+  // counters make no power.
+  char power_source[HOST_POWER_SOURCE_MAX_LENGTH];
+  unsigned power_probe_failures; // Stop polling sources that are not there
   unsigned sample_count;
   double *history[host_metric_count];
   unsigned history_capacity;
@@ -161,21 +197,91 @@ bool host_swap_parse_meminfo_text(const char *text, struct host_swap_info *info)
 // trusted: no swap at all, or more free swap than the machine has.
 bool host_swap_usage(const struct host_swap_info *info, double *used_gib, double *total_gib);
 
+// The package power helpers are pure, like the other parsers of this file, so
+// that the counter semantics can be checked on a machine that has no such
+// counter at all.
+
+// Parse the content of a powercap energy_uj or max_energy_range_uj file: one
+// number, optionally trailed by blanks. Anything else - a sign, a trailing
+// text, an out of range value - is refused.
+bool host_power_parse_energy_counter_text(const char *text, uint64_t *microjoules);
+
+// Same as above for the energy counter itself, where a counter that reads zero
+// reports no energy at all and is therefore not a sample to build a rate on.
+bool host_power_parse_energy_uj_text(const char *text, uint64_t *energy_uj);
+
+// Parse the content of a powercap zone `name` file, "package-0\n", into the
+// name it declares, without the blanks around it.
+bool host_power_parse_zone_name_text(const char *text, char *name, size_t size);
+
+// true if a powercap zone name declares a whole CPU package: "package",
+// "package-<n>", "pkg", "pkg-<n>", "soc", "soc-<n>" or the AMD package domain
+// "amd". The sub zones of a package - core, dram, uncore, platform - are not a
+// package and are refused, and so is a name whose package index is not a plain
+// number. The case of the name does not matter.
+bool host_power_zone_name_is_package(const char *name);
+
+// Index a package zone name declares ("package-1" is the second package), 0
+// when the name declares a package without saying which one.
+bool host_power_zone_name_index(const char *name, unsigned *index);
+
+// true if the label of an hwmon power input declares the package: a label that
+// names the package, be it "Package", "Pkg" or "VDDPKG".
+bool host_power_hwmon_label_is_package(const char *label);
+
+// Watts drawn by the package between two samples of its energy counter: the
+// energy delta over the elapsed monotonic time. The counter wrapping at its
+// max energy range is handled; everything else that makes a delta untrustworthy
+// is refused, and *watts left untouched: a first sample, an elapsed time of
+// zero, a counter that did not move, a counter that decreased without a wrap to
+// explain it (a reset, a zone that came back with another value), two samples
+// of two different ranges, a counter outside its own range, and a power above
+// HOST_POWER_MAX_PLAUSIBLE_WATTS. An unavailable power is reported as such by
+// the caller, never as 0W.
+bool host_power_watts_between(const struct host_power_sample *previous, const struct host_power_sample *current,
+                              double elapsed_seconds, double *watts);
+
+// Parse the content of an hwmon power*_input file, microwatts, into watts. A
+// sensor that reads zero, or a negative or absurd value, reports nothing.
+bool host_power_parse_hwmon_input_text(const char *text, double *watts);
+
 // The CPU detail block displayed above the combined CPU/RAM chart, with the
 // same density as a GPU detail block:
 //   line 0: Device CPU [<model>]  CORES <physical>C/<logical>T
-//   line 1: CPU  <util>%   FREQ <average>   LOAD <1m> / <5m> / <15m>
+//   line 1: CPU  <util>%   FREQ <average>   LOAD <1m> / <5m> / <15m>   POWER <watts>W
 //   line 2: RAM  <used>/<total> GiB  <percent>%   AVAIL <avail>   SWAP <used>/<total> GiB
 #define HOST_DETAIL_LINE_COUNT 3u
 
 // Format one line of the CPU detail block for a block `width` columns wide.
 // The fields that do not fit are dropped in the responsive order: the swap
 // first, then the 5 and 15 minute load averages, then the available memory,
-// then the static CPU information. The CPU utilization and the memory usage
-// are never dropped and an overlong model name is truncated. Like snprintf, the
-// return value is the length the line would have needed at its fullest.
+// then the package power, then the static CPU information. The CPU utilization
+// and the memory usage are never dropped and an overlong model name is
+// truncated. Like snprintf, the return value is the length the line would have
+// needed at its fullest.
 unsigned host_metrics_format_detail_line(const struct host_metrics_state *state, unsigned line_index, unsigned width,
                                          char *buffer, size_t size);
+
+// The title of a field of the detail block, and where it lies in the formatted
+// line, so that the interface can color the titles the way the GPU detail
+// blocks color theirs, and color nothing else. A title that the narrow
+// formatter dropped, cut, or never wrote has no field for it.
+struct host_detail_field {
+  unsigned offset; // Column of the title in the line
+  unsigned length; // Columns of the title
+};
+
+// Enough for the most crowded line of the block, with room to spare.
+#define HOST_DETAIL_FIELD_MAX 6u
+
+// Same as host_metrics_format_detail_line, and the placement of the field
+// titles of that line on top, for up to max_fields of them, in line order. The
+// fields are index aligned with the fields of the line as it was written: an
+// overlong line is truncated and the titles past the truncation are not
+// reported.
+unsigned host_metrics_format_detail_line_fields(const struct host_metrics_state *state, unsigned line_index,
+                                                unsigned width, char *buffer, size_t size,
+                                                struct host_detail_field *fields, unsigned max_fields);
 
 // Allocate the history buffers. capacity is clamped to sane bounds.
 bool host_metrics_init(struct host_metrics_state *state, unsigned capacity);
@@ -183,14 +289,12 @@ bool host_metrics_init(struct host_metrics_state *state, unsigned capacity);
 // Short name of a metric, used as the prefix of the chart line legend.
 const char *host_metric_name(enum host_metric metric);
 
-// Format the legend of the chart line of a metric: CPU utilization, or memory
-// used and total in GiB with the utilization. The short form only gives the
-// utilization, for the narrow charts where the detailed one does not fit. An
-// unavailable metric says N/A: it is never shown as an idle zero. Like
-// snprintf, the return value is the length the legend would have needed, so
-// that the caller can tell whether the detailed form fitted the chart.
-unsigned host_metrics_format_legend(const struct host_metrics_state *state, enum host_metric metric, bool short_form,
-                                    char *buffer, size_t size);
+// Legend key of the chart line of a metric: "CPU %" for the CPU utilization
+// line, "RAM %" for the memory utilization line. A legend is a key that says
+// which curve is which metric, not a readout: the current values, available or
+// not, belong to the detail block above the chart, exactly like the GPU charts
+// do.
+const char *host_metric_legend_name(enum host_metric metric);
 
 void host_metrics_release(struct host_metrics_state *state);
 

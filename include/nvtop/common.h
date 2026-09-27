@@ -47,6 +47,11 @@ static void *nvtop_reallocarray__(void *ptr, size_t nmemb, size_t size) {
 
 #define MAX_LINES_PER_PLOT 4
 
+// Width of a chart line legend, the chart key that says which line is which
+// metric. Declared here, next to MAX_LINES_PER_PLOT, so that the layout of the
+// legend row can be computed (and tested) without pulling the terminal library.
+#define PLOT_MAX_LEGEND_SIZE 35
+
 // Helper macro to stringify an integer
 #define QUOTE(x) #x
 #define EXPAND_AND_QUOTE(x) QUOTE(x)

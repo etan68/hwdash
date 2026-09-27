@@ -21,6 +21,7 @@
 
 #include "nvtop/plot.h"
 #include "nvtop/common.h"
+#include "nvtop/plot_legend.h"
 
 #include <assert.h>
 #include <ncurses.h>
@@ -126,20 +127,37 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
       lvl_before[k] = lvl_now_k;
     }
   }
-  int plot_y_position = 0;
-  for (unsigned i = 0; i < num_lines && plot_y_position < rows; ++i) {
-    wcolor_set(win, plot_line_colors[i], NULL);
-    if (legend_left) {
-      mvwprintw(win, plot_y_position, 0, "%.*s", cols, legend[i]);
-    } else {
-      size_t length = strlen(legend[i]);
-      if (length <= (size_t)cols) {
-        mvwprintw(win, plot_y_position, cols - length, "%s", legend[i]);
-      } else {
-        mvwprintw(win, plot_y_position, 0, "%.*s", (int)(length - cols), legend[i]);
-      }
+  // A legend is a key for the plot lines, not a readout of their current
+  // value: all the entries share the same row, horizontally, and each entry is
+  // followed by a short horizontal swatch. Text and swatch of an entry use the
+  // color of the plot line they stand for. The current values belong to the
+  // detail block of the device, right above the chart.
+  if (cols > 0) {
+    char legend_row[PLOT_LEGEND_ROW_SIZE];
+    struct plot_legend_key keys[MAX_LINES_PER_PLOT];
+    // The row is limited to the width of the chart: what does not fit is cut by
+    // the formatter instead of wrapping or leaving the window.
+    unsigned needed = nvtop_format_plot_legend_row(legend_row, (size_t)cols + 1u, num_lines, legend, keys,
+                                                   MAX_LINES_PER_PLOT);
+    // Anchored where the legends belong: at the left edge of the chart, or, for
+    // the legends on the right, the complete row aligned at the right edge as
+    // long as it fits.
+    unsigned start = 0u;
+    if (!legend_left && needed <= (unsigned)cols)
+      start = (unsigned)cols - needed;
+    for (unsigned i = 0; i < num_lines; ++i) {
+      if (keys[i].length == 0u)
+        continue;
+      unsigned column = start + keys[i].offset;
+      if (column >= (unsigned)cols)
+        break;
+      unsigned length = keys[i].length;
+      if (column + length > (unsigned)cols)
+        length = (unsigned)cols - column;
+      wcolor_set(win, plot_line_colors[i], NULL);
+      mvwaddnstr(win, 0, (int)column, legend_row + keys[i].offset, (int)length);
     }
-    plot_y_position++;
+    wstandend(win);
   }
 }
 
