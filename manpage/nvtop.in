@@ -85,18 +85,17 @@ legend never shows the current value of its metric, which the detail block above
 shows; a row that does not fit a narrow chart is cut, never wrapped.
 .TP
 The current value of every line of a chart is read out in a \fBgutter\fR at its right edge, in the
-color of that line: \fB0.4%\fR, \fB92.6%\fR, \fB100.0%\fR. The frame stops short of the right edge
-of the section by the width of the gutter, which takes its columns off the data area and never off the
-section itself. A value sits on the row its own line ends on; when two values would land on the same
+color of that line: \fB0.4%\fR, \fB92.6%\fR, \fB100.0%\fR. The frame extends to the column immediately
+before the fixed-position value, while the section itself keeps the width the layout gave it. A value
+sits on the row its own line ends on; when two values would land on the same
 row, or too close to be read apart, they take separate adjacent rows, the highest value highest on the
 screen and, on a tie, the lower plot line above the higher one. A readout always stays inside the data
 region, below the legend and above the time axis, and a line whose newest sample is not available
 shows no readout rather than a made up zero.
 .TP
-The oldest edge of a chart is kept clean: a curve begins at the first sample that belongs to a
-continuous visible segment, and the oldest sample leaves the chart together with the connector that
-used to follow it, so no leftover mark hangs at the edge. With the time axis reversed the left edge is
-the newest one and keeps the head of every line.
+The oldest edge of a chart is kept clean: every curve begins against the Y axis as one connected
+segment, and the oldest sample leaves together with its transition, so neither a detached short mark
+nor a vertical remnant hangs at the edge. The same connected edge applies with a reversed time axis.
 .TP
 On a small terminal that cannot give the minimum chart height to every device, whole device
 sections are left out, in a fixed order: the \fBCPU device first\fR, then the \fBGPU device sections

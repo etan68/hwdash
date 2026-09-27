@@ -16,17 +16,14 @@ int nvtop_plot_data_level(unsigned window_rows, double percent) {
   return (int)bottom - (int)lround(percent * (double)span / 100.);
 }
 
-unsigned nvtop_plot_first_drawn_column(bool reversed_time_axis) { return reversed_time_axis ? 0u : 1u; }
+unsigned nvtop_plot_first_drawn_column(bool reversed_time_axis) {
+  (void)reversed_time_axis;
+  return 0u;
+}
 
 enum nvtop_plot_sample_action nvtop_plot_sample_action_at(bool reversed_time_axis, unsigned sample_column) {
-  if (sample_column < nvtop_plot_first_drawn_column(reversed_time_axis))
-    return nvtop_plot_sample_drop;
-  // On the ordinary axis, column zero is the disappearing (oldest) edge. Its
-  // sample is dropped together with its connector, so column one starts a new
-  // line and later columns connect to it. On a reversed axis the disappearing
-  // edge is on the right: the leftmost, newest sample starts the line and every
-  // following column connects normally.
-  if (sample_column > (reversed_time_axis ? 0u : 1u))
+  (void)reversed_time_axis;
+  if (sample_column > 0u)
     return nvtop_plot_sample_connect;
   return nvtop_plot_sample_point;
 }

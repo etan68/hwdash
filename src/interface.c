@@ -384,18 +384,19 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
     return;
 
   unsigned rows = position->sizeY;
-  unsigned cols = position->sizeX;
+  unsigned data_cols = position->sizeX;
   // The frame of the chart stops short of the right edge of the section by the
   // readout gutter, and the gutter takes its columns off the data area: the
   // section keeps exactly the width the layout gave it, no curve ever reaches
   // under a value, and no value ever reaches over the frame or the section.
-  cols -= PLOT_COLUMNS_NOT_DATA;
-  cols -= cols % plot->num_data_lines; // Every line owns the same samples
+  data_cols -= PLOT_COLUMNS_NOT_DATA;
+  data_cols -= data_cols % plot->num_data_lines; // Every line owns the same samples
+  const unsigned plot_cols = data_cols + PLOT_EDGE_EXTENSION;
   rows -= 2;
-  plot->plot_window = newwin(rows, cols, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET);
-  plot->readout_window =
-      newwin(rows, PLOT_READOUT_GUTTER_SIZE, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET + cols + 1);
-  draw_rectangle(plot->win, PLOT_Y_AXIS_COL, 0, cols + 2, rows + 2);
+  plot->plot_window = newwin(rows, plot_cols, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET);
+  plot->readout_window = newwin(rows, PLOT_READOUT_GUTTER_SIZE, position->posY + 1,
+                                position->posX + PLOT_DATA_X_OFFSET + plot_cols + 1);
+  draw_rectangle(plot->win, PLOT_Y_AXIS_COL, 0, plot_cols + 2, rows + 2);
 
   static const unsigned tick_values[] = {100u, 75u, 50u, 25u, 0u};
   for (unsigned i = 0; i < sizeof(tick_values) / sizeof(tick_values[0]); ++i) {
@@ -407,8 +408,8 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
     mvwaddch(plot->win, frame_row, PLOT_Y_TICK_COL, ACS_HLINE);
     mvwaddch(plot->win, frame_row, PLOT_Y_AXIS_COL, ACS_RTEE);
   }
-  plot->data = calloc(cols, sizeof(*plot->data));
-  plot->num_data = cols;
+  plot->data = calloc(data_cols, sizeof(*plot->data));
+  plot->num_data = data_cols;
 
   // A column of the chart holds one sample of each of its lines, whatever the
   // number of lines displayed in the chart.
@@ -422,40 +423,43 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
     mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET, "%s", toPrint);
 
     int retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                          options->update_interval * cols / 4 / column_divisor / 1000);
+                          options->update_interval * data_cols / 4 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols / 4 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols / 2 / column_divisor / 1000);
+                      options->update_interval * data_cols / 2 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols / 2 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols * 3 / 4 / column_divisor / 1000);
+                      options->update_interval * data_cols * 3 / 4 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols * 3 / 4 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols / column_divisor / 1000);
+                      options->update_interval * data_cols / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols - strlen(toPrint), "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols - strlen(toPrint), "%s", toPrint);
   } else {
     char *toPrint;
     int retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                          options->update_interval * cols / column_divisor / 1000);
+                          options->update_interval * data_cols / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
@@ -463,31 +467,34 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
     mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols * 3 / 4 / column_divisor / 1000);
+                      options->update_interval * data_cols * 3 / 4 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols / 4 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols / 2 / column_divisor / 1000);
+                      options->update_interval * data_cols / 2 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols / 2 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
-                      options->update_interval * cols / 4 / column_divisor / 1000);
+                      options->update_interval * data_cols / 4 / column_divisor / 1000);
     if (retval >= (int)sizeof(elapsedSeconds))
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols * 3 / 4 - strlen(toPrint) / 2, "%s",
+              toPrint);
 
     toPrint = zeroSec;
-    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols - strlen(toPrint), "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + plot_cols - strlen(toPrint), "%s", toPrint);
   }
   wnoutrefresh(plot->win);
 }
@@ -935,24 +942,9 @@ static void draw_percentage_meter(WINDOW *win, const char *prelude, unsigned int
   unsigned int right_side_braces_space_required = strlen(inside_braces_right);
   wmove(win, cury, curx + between_sbraces - right_side_braces_space_required);
   wprintw(win, "%s", inside_braces_right);
-  mvwchgat(win, cury, curx, represent_usage, 0, green_color, NULL);
-  wnoutrefresh(win);
-}
-
-// Draw percentage with a yellow highlight percentage (yellow percentage <= new_percentage)
-static void draw_percentage_meter_with_yellow_highlight(WINDOW *win, const char *prelude, unsigned int new_percentage,
-                                                        unsigned int yellow_percentage,
-                                                        const char inside_braces_right[1024]) {
-  draw_percentage_meter(win, prelude, new_percentage, inside_braces_right);
-  if (yellow_percentage > new_percentage)
-    yellow_percentage = new_percentage;
-  int rows, cols;
-  getmaxyx(win, rows, cols);
-  (void)rows;
-  size_t size_prelude = strlen(prelude);
-  int between_sbraces = cols - size_prelude - 2;
-  float usage = round((float)between_sbraces * yellow_percentage / 100.f);
-  mvwchgat(win, 0, size_prelude + 1, (int)usage, 0, yellow_color, NULL);
+  // The complete value inside the brackets is one status field. Keep its bar,
+  // numeric suffix and final unit in the same green.
+  mvwchgat(win, cury, curx, between_sbraces, 0, green_color, NULL);
   wnoutrefresh(win);
 }
 
@@ -1173,9 +1165,7 @@ static void draw_devices(struct list_head *devices, struct nvtop_interface *inte
       if (GPUINFO_DYNAMIC_FIELD_VALID(&device->dynamic_info, effective_load_rate)) {
         snprintf(buff, 1024, "%u%%(eff %u%%)", device->dynamic_info.gpu_util_rate,
                  device->dynamic_info.effective_load_rate);
-        draw_percentage_meter_with_yellow_highlight(gpu_util_win, DEVICE_UNIT_NAME(device),
-                                                    device->dynamic_info.gpu_util_rate,
-                                                    device->dynamic_info.effective_load_rate, buff);
+        draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), device->dynamic_info.gpu_util_rate, buff);
       } else {
         snprintf(buff, 1024, "%u%%", device->dynamic_info.gpu_util_rate);
         draw_percentage_meter(gpu_util_win, DEVICE_UNIT_NAME(device), device->dynamic_info.gpu_util_rate, buff);

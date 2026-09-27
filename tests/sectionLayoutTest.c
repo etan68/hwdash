@@ -538,14 +538,14 @@ static void test_detail_rows_line_up_with_the_chart_axis(void) {
   CHECK(layout_detail_indent(&layout.result.host_detail, &tiny) == 0u);
 }
 
-// A chart moves its right border left by the readout gutter and takes the
-// columns of the gutter off its own data area: the section keeps the width the
-// row has, and every line of the chart owns exactly as many sample columns as
-// the others, the gutter being as wide as a clamped 100.0% is wide.
+// The chart, its shared edge extension and its readout gutter all fit in the
+// section width. Every line owns exactly as many history columns as the others,
+// while the display-only edge column lets the frame approach the fixed value.
 static void test_chart_pays_for_its_readout_gutter(void) {
   CHECK(PLOT_READOUT_VALUE_WIDTH == 6u);           // 100.0% is the widest value
-  CHECK(PLOT_READOUT_GUTTER_SIZE == 8u);           // value, a pad on each side
-  CHECK(PLOT_COLUMNS_NOT_DATA == PLOT_HORIZONTAL_OVERHEAD + PLOT_READOUT_GUTTER_SIZE);
+  CHECK(PLOT_READOUT_GUTTER_SIZE == 7u); // value plus an outer-edge pad
+  CHECK(PLOT_COLUMNS_NOT_DATA ==
+        PLOT_HORIZONTAL_OVERHEAD + PLOT_READOUT_GUTTER_SIZE + PLOT_EDGE_EXTENSION);
 
   const unsigned cols_values[] = {1u, 20u, 34u, 35u, 36u, 37u, 60u, 61u, 100u, 101u, 162u, 200u};
   for (unsigned col_id = 0; col_id < sizeof(cols_values) / sizeof(*cols_values); ++col_id) {
@@ -564,7 +564,8 @@ static void test_chart_pays_for_its_readout_gutter(void) {
       CHECK(data + lines + PLOT_COLUMNS_NOT_DATA > layout.cols);
       // The gutter fits between the right border of the chart and the last
       // column of the section, with the value never reaching either of them.
-      CHECK(PLOT_DATA_X_OFFSET + data + 1u + PLOT_READOUT_GUTTER_SIZE <= layout.result.host_chart.sizeX);
+      CHECK(PLOT_DATA_X_OFFSET + data + PLOT_EDGE_EXTENSION + 1u + PLOT_READOUT_GUTTER_SIZE <=
+            layout.result.host_chart.sizeX);
     }
   }
 }

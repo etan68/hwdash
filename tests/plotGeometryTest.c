@@ -38,15 +38,15 @@ static void test_legend_clearance_and_scale(void) {
   CHECK(nvtop_plot_data_level(PLOT_DATA_TOP_ROW, 50.) == -1);
 }
 
-// The oldest edge of a chart holds no mark at all: the oldest sample and the
-// connector that used to follow it disappear together, and the line begins one
-// column in. The reversed axis keeps its newest edge.
-static void test_left_edge_keeps_no_mark(void) {
-  CHECK(nvtop_plot_first_drawn_column(false) == 1u);
+// Every line starts against the Y axis. The next sample connects to that first
+// one, so the first point and transition leave together instead of producing a
+// detached one-character mark.
+static void test_left_edge_starts_one_connected_segment(void) {
+  CHECK(nvtop_plot_first_drawn_column(false) == 0u);
   CHECK(nvtop_plot_first_drawn_column(true) == 0u);
 
-  CHECK(nvtop_plot_sample_action_at(false, 0u) == nvtop_plot_sample_drop);
-  CHECK(nvtop_plot_sample_action_at(false, 1u) == nvtop_plot_sample_point);
+  CHECK(nvtop_plot_sample_action_at(false, 0u) == nvtop_plot_sample_point);
+  CHECK(nvtop_plot_sample_action_at(false, 1u) == nvtop_plot_sample_connect);
   CHECK(nvtop_plot_sample_action_at(false, 2u) == nvtop_plot_sample_connect);
   CHECK(nvtop_plot_sample_action_at(false, 100u) == nvtop_plot_sample_connect);
 
@@ -55,11 +55,9 @@ static void test_left_edge_keeps_no_mark(void) {
   CHECK(nvtop_plot_sample_action_at(true, 2u) == nvtop_plot_sample_connect);
   CHECK(nvtop_plot_sample_action_at(true, 100u) == nvtop_plot_sample_connect);
 
-  // Nothing is ever dropped on a reversed axis, and only the leftmost column
-  // of an ordinary one.
+  // Only column zero starts a segment, whichever direction time flows.
   for (unsigned column = 0u; column < 40u; ++column) {
-    CHECK((nvtop_plot_sample_action_at(false, column) == nvtop_plot_sample_drop) == (column == 0u));
-    CHECK(nvtop_plot_sample_action_at(true, column) != nvtop_plot_sample_drop);
+    CHECK((nvtop_plot_sample_action_at(false, column) == nvtop_plot_sample_point) == (column == 0u));
     CHECK((nvtop_plot_sample_action_at(true, column) == nvtop_plot_sample_point) == (column == 0u));
   }
 }
@@ -80,8 +78,7 @@ static void test_newest_drawn_value_follows_the_time_direction(void) {
   // The newest sample of a reversed chart is its leftmost drawn column.
   const double single[] = {42., 43.};
   CHECK(nvtop_plot_newest_drawn_value(1u, true, single, 2u, 0u, &value) && value == 42.);
-  // An ordinary chart never draws its leftmost column: it has nothing to show.
-  CHECK(!nvtop_plot_newest_drawn_value(1u, false, single, 2u, 0u, &value));
+  CHECK(nvtop_plot_newest_drawn_value(1u, false, single, 2u, 0u, &value) && value == 42.);
   CHECK(!nvtop_plot_newest_drawn_value(0u, false, single, 2u, 0u, &value));
   CHECK(!nvtop_plot_newest_drawn_value(1u, false, NULL, 2u, 0u, &value));
   CHECK(!nvtop_plot_newest_drawn_value(1u, false, single, 0u, 0u, &value));
@@ -97,10 +94,9 @@ static void test_newest_drawn_value_follows_the_time_direction(void) {
   CHECK(nvtop_plot_newest_drawn_value(5u, true, holes, 2u, 0u, &value) && value == 11.);
   CHECK(nvtop_plot_newest_drawn_value(5u, true, holes, 2u, 1u, &value) && value == 22.);
   CHECK(!nvtop_plot_newest_drawn_value(5u, false, holes, 2u, 3u, &value));
-  // A line that is only ever missing, or that only has a value in the column
-  // the chart does not draw, has no current value.
+  // A line that is only ever missing has no current value.
   const double only_oldest[] = {NAN, 7., NAN, NAN};
-  CHECK(!nvtop_plot_newest_drawn_value(2u, false, only_oldest, 2u, 1u, &value));
+  CHECK(nvtop_plot_newest_drawn_value(2u, false, only_oldest, 2u, 1u, &value) && value == 7.);
   CHECK(!nvtop_plot_newest_drawn_value(2u, false, only_oldest, 2u, 0u, &value));
   CHECK(nvtop_plot_newest_drawn_value(2u, true, only_oldest, 2u, 1u, &value) && value == 7.);
 }
@@ -248,7 +244,7 @@ static void test_readout_placement(void) {
 
 int main(void) {
   test_legend_clearance_and_scale();
-  test_left_edge_keeps_no_mark();
+  test_left_edge_starts_one_connected_segment();
   test_newest_drawn_value_follows_the_time_direction();
   test_readout_formatting();
   test_readout_placement();

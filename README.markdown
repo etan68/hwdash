@@ -114,9 +114,9 @@ CPU chart ``CPU % ---    RAM % ---``. The current value of a metric is not part 
 detail block right above each chart already shows the values.
 
 The current value of every line of a chart is instead read out in a **gutter** at the right edge of
-the chart. The frame stops short of the right edge of the section by the width of that gutter, so the
-section keeps the width the layout gave it, and the values are written outside the frame, outside the
-curves and outside the legend, each in the color of its line: ``0.4%``, ``92.6%``, ``100.0%``. A value
+the chart. The frame extends to the column immediately before the fixed-position value, leaving only
+the separation the two need, while the section keeps the width the layout gave it. Values stay outside
+the frame, curves and legend, each in the color of its line: ``0.4%``, ``92.6%``, ``100.0%``. A value
 sits on the row its own line ends on, so the number is level with the end of its curve; when two values
 would land on the same row, or too close for both to be read, they take separate adjacent rows, the
 higher value above the lower one and, when two values are equal, the lower plot line above the higher
@@ -125,10 +125,10 @@ region, below the legend and above the time axis, so neither a 0% nor a 100% eve
 and no value repeats the name of its metric, which is what the legend is for. A line whose newest
 sample is not available shows no readout at all, never an invented 0%.
 
-The oldest edge of a chart is kept clean: a curve begins at the first sample that belongs to a
-continuous visible segment, and the oldest sample leaves the chart together with the connector that
-used to follow it, so no leftover mark is ever left hanging at the edge. With the time axis reversed
-the left edge is the newest one and keeps the head of every line.
+The oldest edge of a chart is kept clean: every curve begins against the Y axis as one connected
+segment, and the oldest sample leaves together with its transition, so neither a detached short mark
+nor a vertical remnant hangs at the edge. The same connected edge applies when the time axis is
+reversed and the left edge is the newest one.
 
 ### Screen layout
 

@@ -87,7 +87,13 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
         lvl_before[k] = (unsigned)level;
         has_lvl_before[k] = true;
         wcolor_set(win, plot_line_colors[k], NULL);
-        mvwhline(win, lvl_before[k], i + k, 0, 1);
+        // Interleaved lines share the same left edge even though their later
+        // sample columns are staggered by line. Fill the complete first sample
+        // group so no line leaves a one-column hole before its next sample.
+        if (sample_column == 0u)
+          mvwhline(win, lvl_before[k], i, 0, num_lines);
+        else
+          mvwhline(win, lvl_before[k], i + k, 0, 1);
         continue;
       case nvtop_plot_sample_connect:
         break;
@@ -156,6 +162,18 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
         }
       }
       lvl_before[k] = lvl_now_k;
+    }
+  }
+
+  // Carry every visible line through the shared edge column to the frame. The
+  // column is display-only and does not change the amount of history shown.
+  if ((size_t)cols > num_data) {
+    const int edge = cols - 1;
+    for (unsigned k = 0; k < num_lines; ++k) {
+      if (!has_lvl_before[k])
+        continue;
+      wcolor_set(win, plot_line_colors[k], NULL);
+      mvwaddch(win, (int)lvl_before[k], edge, ACS_HLINE);
     }
   }
   // A legend is a key for the plot lines, not a readout of their current

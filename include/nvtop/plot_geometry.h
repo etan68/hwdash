@@ -26,15 +26,20 @@
 // The widest value the gutter holds is a clamped "100.0%".
 #define PLOT_READOUT_VALUE_WIDTH 6u
 #define PLOT_READOUT_VALUE_SIZE (PLOT_READOUT_VALUE_WIDTH + 1u)
-// One blank column between the frame and the values, one at the edge.
-#define PLOT_READOUT_LEFT_PAD 1u
+// The value begins immediately after the frame. Keep one blank column at the
+// outer edge of the section.
+#define PLOT_READOUT_LEFT_PAD 0u
 #define PLOT_READOUT_RIGHT_PAD 1u
 #define PLOT_READOUT_GUTTER_SIZE (PLOT_READOUT_LEFT_PAD + PLOT_READOUT_VALUE_WIDTH + PLOT_READOUT_RIGHT_PAD)
+
+// One shared display column carries every line to the right frame without
+// adding another history sample.
+#define PLOT_EDGE_EXTENSION 1u
 
 // Columns of a chart that can never hold a data column: the labels, the axis,
 // the two borders and the readout gutter. What is left of the width the layout
 // gave the chart is shared out between the lines it draws.
-#define PLOT_COLUMNS_NOT_DATA (PLOT_HORIZONTAL_OVERHEAD + PLOT_READOUT_GUTTER_SIZE)
+#define PLOT_COLUMNS_NOT_DATA (PLOT_HORIZONTAL_OVERHEAD + PLOT_READOUT_GUTTER_SIZE + PLOT_EDGE_EXTENSION)
 
 // What the renderer makes of one sample of a line, given the column it lies in
 // and the direction the time flows in.
@@ -55,21 +60,13 @@ struct plot_readout {
 // 0..100. Returns -1 when the window cannot hold the legend, gap and data.
 int nvtop_plot_data_level(unsigned window_rows, double percent);
 
-// The column of the oldest sample of a line that still gets a mark. With the
-// ordinary direction of time the left edge of a chart is its oldest edge and
-// nothing is drawn there: the connector between the first two visible samples
-// is deliberately omitted, so the oldest sample has no connector at all and it
-// must leave the chart together with it, instead of surviving one refresh as an
-// isolated mark. A line therefore begins one column in from the left edge, at
-// the first sample that can be connected to. With the time axis reversed the
-// left edge is the newest edge, which holds the head of every line, so nothing
-// is ever left out there.
+// The first drawn sample touches the left Y axis in either time direction. It
+// starts a segment; the following sample connects to it. When the first sample
+// scrolls out, its transition leaves in the same refresh.
 unsigned nvtop_plot_first_drawn_column(bool reversed_time_axis);
 
-// What to draw for the sample of a line at a column. On an ordinary axis the
-// disappearing sample at column zero is dropped together with its connector;
-// on a reversed axis the left edge is the newest sample and starts a normally
-// connected line.
+// What to draw for the sample of a line at a column. Column zero starts the
+// visible segment and every later sample connects normally.
 enum nvtop_plot_sample_action nvtop_plot_sample_action_at(bool reversed_time_axis, unsigned sample_column);
 
 // The value to read out for a line: the most recent sample of that line that is
