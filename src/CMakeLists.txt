@@ -12,9 +12,10 @@ add_executable(nvtop
   interface_options.c
   interface_setup_win.c
   interface_ring_buffer.c
-  host_metrics.c
-  extract_gpuinfo.c
-  pcie_utilization.c
+  collectors/host/host_metrics.c
+  collectors/gpu/extract_gpuinfo.c
+  collectors/gpu/pcie_utilization.c
+  collectors/vendor/lenovo_cpu_fan.c
   time.c
   plot.c
   plot_geometry.c
@@ -48,24 +49,24 @@ option(USE_LIBUDEV_OVER_LIBSYSTEMD "Use libudev, even if libsystemd is present" 
 
 if(UNIX AND NOT APPLE)
   target_sources(nvtop PRIVATE
-    get_process_info_linux.c
-    extract_processinfo_fdinfo.c
+    collectors/gpu/get_process_info_linux.c
+    collectors/gpu/extract_processinfo_fdinfo.c
     info_messages_linux.c)
 elseif(APPLE)
   target_sources(nvtop PRIVATE
-    get_process_info_mac.c
-    extract_processinfo_mac.c
+    collectors/gpu/get_process_info_mac.c
+    collectors/gpu/extract_processinfo_mac.c
     info_messages_mac.c)
 endif()
 
 if(NVIDIA_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_nvidia.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_nvidia.c)
 else()
-  target_sources(nvtop PRIVATE nvlink_nvidia_disabled.c)
+  target_sources(nvtop PRIVATE collectors/gpu/nvlink_nvidia_disabled.c)
 endif()
 
 if(ASCEND_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_ascend.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_ascend.c)
   set(DCMI_LIBRARY_PATH /usr/local/Ascend/driver/lib64/driver)
   target_link_libraries(nvtop PRIVATE "${DCMI_LIBRARY_PATH}/libdcmi.so")
 endif()
@@ -81,7 +82,7 @@ if(AMDGPU_SUPPORT OR RADEON_SUPPORT OR INTEL_SUPPORT OR V3D_SUPPORT)
     message(FATAL_ERROR "Neither libsystemd nor libudev were found; These are required for AMDGPU, INTEL and V3D support")
   endif()
 
-  target_sources(nvtop PRIVATE device_discovery_linux.c)
+  target_sources(nvtop PRIVATE collectors/gpu/device_discovery_linux.c)
 endif()
 
 if(AMDGPU_SUPPORT OR RADEON_SUPPORT OR INTEL_SUPPORT OR MSM_SUPPORT OR PANFROST_SUPPORT OR PANTHOR_SUPPORT)
@@ -98,17 +99,17 @@ if(AMDGPU_SUPPORT OR RADEON_SUPPORT OR INTEL_SUPPORT OR MSM_SUPPORT OR PANFROST_
 endif()
 
 if (AMDGPU_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_amdgpu.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_amdgpu_utils.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_amdgpu.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_amdgpu_utils.c)
 endif()
 
 if (RADEON_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_radeon.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_radeon.c)
 endif()
 
 if (MSM_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_msm.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_msm_utils.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_msm.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_msm_utils.c)
 
   pkg_check_modules(NPUPERF qcnpuperf)
   if (NPUPERF_FOUND)
@@ -121,25 +122,25 @@ if (MSM_SUPPORT)
       PRIVATE
         ${NPUPERF_LIBRARIES}
     )
-    target_sources(nvtop PRIVATE extract_npuinfo_qualcomm.c)
+    target_sources(nvtop PRIVATE collectors/gpu/extract_npuinfo_qualcomm.c)
   else()
     message(STATUS "libqcnpuperf not found: Qualcomm NPU monitoring disabled")
   endif()
 endif()
 
 if(INTEL_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_intel.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_intel_i915.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_intel_xe.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel_i915.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel_xe.c)
 endif()
 
 if(V3D_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_v3d.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_v3d_utils.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_v3d.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_v3d_utils.c)
 endif()
 
 if(APPLE_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_apple.m)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_apple.m)
   target_link_libraries(nvtop PRIVATE
     "-framework Metal"
     "-framework AppKit"
@@ -149,17 +150,17 @@ if(APPLE_SUPPORT)
 endif()
 
 if (PANFROST_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_panfrost.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_panfrost_utils.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_panfrost.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_panfrost_utils.c)
 endif()
 
 if (PANTHOR_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_panthor.c)
-  target_sources(nvtop PRIVATE extract_gpuinfo_panthor_utils.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_panthor.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_panthor_utils.c)
 endif()
 
 if ((PANFROST_SUPPORT) OR (PANTHOR_SUPPORT))
-  target_sources(nvtop PRIVATE extract_gpuinfo_mali_common.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_mali_common.c)
 endif()
 
 if(TPU_SUPPORT)
@@ -172,31 +173,31 @@ if(TPU_SUPPORT)
     message(WARNING "TPU Support enabled, but libtpuinfo.so not found in ldconfig path, we will not be able to read TPU usage")
     set(TPU_SUPPORT_DEFAULT OFF)
   endif()
-  target_sources(nvtop PRIVATE extract_gpuinfo_tpu.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_tpu.c)
 endif()
 
 if(ROCKCHIP_SUPPORT)
   message(STATUS "Building with Rockchip NPU support")
 
-  target_sources(nvtop PRIVATE extract_npuinfo_rockchip.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_npuinfo_rockchip.c)
 endif()
 
 if(METAX_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_metax.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_metax.c)
 endif()
 
 if(ENFLAME_SUPPORT)
   message(STATUS "Building with Enflame GCU support")
-  target_sources(nvtop PRIVATE extract_gcuinfo_enflame.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gcuinfo_enflame.c)
 endif()
 
 if(TENSTORRENT_SUPPORT)
-  target_sources(nvtop PRIVATE extract_gpuinfo_tenstorrent.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_tenstorrent.c)
 endif()
 
 if(IXML_SUPPORT)
   message(STATUS "Building with Iluvatar CoreX GPU support")
-  target_sources(nvtop PRIVATE extract_gpuinfo_ixml.c)
+  target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_ixml.c)
 endif()
 
 target_include_directories(nvtop PRIVATE
@@ -219,15 +220,17 @@ install(TARGETS nvtop
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   include(GNUInstallDirs)
-  add_executable(hwdash-lenovo-cpu-fan-helper lenovo_cpu_fan_helper.c)
-  set_property(TARGET hwdash-lenovo-cpu-fan-helper PROPERTY C_STANDARD 11)
-  target_compile_definitions(hwdash-lenovo-cpu-fan-helper PRIVATE _GNU_SOURCE)
-  install(TARGETS hwdash-lenovo-cpu-fan-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+  add_executable(hwdash-helper
+    helper/hardware_helper.c
+    helper/providers/lenovo_ec.c)
+  set_property(TARGET hwdash-helper PROPERTY C_STANDARD 11)
+  target_compile_definitions(hwdash-helper PRIVATE _GNU_SOURCE)
+  install(TARGETS hwdash-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
   configure_file(
-    "${PROJECT_SOURCE_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service.in"
-    "${PROJECT_BINARY_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service"
+    "${PROJECT_SOURCE_DIR}/systemd/hwdash-helper.service.in"
+    "${PROJECT_BINARY_DIR}/systemd/hwdash-helper.service"
     @ONLY)
-  install(FILES "${PROJECT_BINARY_DIR}/systemd/hwdash-lenovo-cpu-fan-helper.service"
+  install(FILES "${PROJECT_BINARY_DIR}/systemd/hwdash-helper.service"
     DESTINATION lib/systemd/system)
 endif()
 

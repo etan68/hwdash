@@ -5,7 +5,8 @@ if (BUILD_TESTING)
     hostMetricsTest
     hostMetricsTest.c
     ${PROJECT_SOURCE_DIR}/src/time.c
-    ${PROJECT_SOURCE_DIR}/src/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/vendor/lenovo_cpu_fan.c
   )
   target_include_directories(hostMetricsTest PRIVATE
     ${PROJECT_SOURCE_DIR}/include)
@@ -21,7 +22,8 @@ if (BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/src/time.c
     ${PROJECT_SOURCE_DIR}/src/interface_layout_selection.c
     ${PROJECT_SOURCE_DIR}/src/interface_options.c
-    ${PROJECT_SOURCE_DIR}/src/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/vendor/lenovo_cpu_fan.c
     ${PROJECT_SOURCE_DIR}/src/ini.c
   )
   target_include_directories(sectionLayoutTest PRIVATE
@@ -63,10 +65,11 @@ if (BUILD_TESTING AND GTest_FOUND)
   # Create a library for testing
   add_library(testLib
     ${PROJECT_SOURCE_DIR}/src/interface_layout_selection.c
-    ${PROJECT_SOURCE_DIR}/src/extract_processinfo_fdinfo.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/gpu/extract_processinfo_fdinfo.c
     ${PROJECT_SOURCE_DIR}/src/interface_options.c
-    ${PROJECT_SOURCE_DIR}/src/pcie_utilization.c
-    ${PROJECT_SOURCE_DIR}/src/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/gpu/pcie_utilization.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/vendor/lenovo_cpu_fan.c
     ${PROJECT_SOURCE_DIR}/src/plot_legend.c
     ${PROJECT_SOURCE_DIR}/src/time.c
     ${PROJECT_SOURCE_DIR}/src/ini.c

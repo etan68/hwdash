@@ -26,6 +26,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "hwdash/vendor/lenovo_cpu_fan.h"
+
 // Whole host metrics (as opposed to the per GPU metrics provided by the
 // vendor backends). The parsing helpers are pure functions of the text they
 // are given so that they can be tested without a live /proc filesystem.
@@ -122,13 +124,8 @@ struct host_metrics_state {
   // unknown power reads N/A in the detail block, never 0W.
   double package_power_watts;
   bool power_valid;
-  // Lenovo CPU fan speed published by the small EC helper. The field is shown
-  // only on machines whose DMI system vendor is Lenovo.
-  unsigned lenovo_fan_rpm;
-  bool lenovo_fan_valid;
-  bool lenovo_fan_supported;
-  bool lenovo_fan_support_probed;
-  unsigned lenovo_fan_probe_failures;
+  // Vendor-specific host sensors are isolated from the generic host collector.
+  struct hwdash_lenovo_cpu_fan lenovo_cpu_fan;
   // Previous sample of the package energy counter and the monotonic time it was
   // taken at: the pair the watts are computed from.
   struct host_power_sample last_power;
@@ -251,10 +248,6 @@ bool host_power_watts_between(const struct host_power_sample *previous, const st
 // Parse the content of an hwmon power*_input file, microwatts, into watts. A
 // sensor that reads zero, or a negative or absurd value, reports nothing.
 bool host_power_parse_hwmon_input_text(const char *text, double *watts);
-
-// Parse one fan*_input or helper output. Zero is a real stopped-fan reading;
-// absurd, signed or otherwise malformed readings are unavailable.
-bool host_lenovo_fan_parse_rpm_text(const char *text, unsigned *rpm);
 
 // The CPU detail block displayed above the combined CPU/RAM chart, with the
 // same density as a GPU detail block:

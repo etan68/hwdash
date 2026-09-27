@@ -1,11 +1,9 @@
 [Unit]
-Description=Publish Lenovo CPU fan RPM for hwdash
-After=systemd-modules-load.service
+Description=Publish privileged hardware metrics for HWDash
 
 [Service]
 Type=simple
-ExecStartPre=/usr/sbin/modprobe ec_sys
-ExecStart=@CMAKE_INSTALL_FULL_LIBEXECDIR@/hwdash-lenovo-cpu-fan-helper
+ExecStart=@CMAKE_INSTALL_FULL_LIBEXECDIR@/hwdash-helper
 RuntimeDirectory=hwdash
 RuntimeDirectoryMode=0755
 Restart=on-failure

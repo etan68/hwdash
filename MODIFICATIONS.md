@@ -9,8 +9,8 @@ The principal modifications as of 2026-09-27 are:
 - a host CPU and RAM device with details, history and chart rendering;
 - host CPU identity, frequency, load, swap and package-power collection;
 - section-based terminal layout and chart legend, edge and live-readout changes;
-- a Lenovo CPU fan RPM adapter consisting of an unprivileged consumer and a
-  separate system helper; and
+- a Lenovo CPU fan RPM adapter consisting of an unprivileged vendor collector
+  and a provider in the generic privileged hardware helper; and
 - build, service, test and documentation changes needed by those features.
 
 Inherited source files retain their original copyright and license notices. New

@@ -627,9 +627,9 @@ TEST(HostDetailBlock, PackagePowerFanFieldsAndTitles) {
   state.cpu_percent = 12.5;
   state.power_valid = true;
   state.package_power_watts = 15.5;
-  state.lenovo_fan_supported = true;
-  state.lenovo_fan_valid = true;
-  state.lenovo_fan_rpm = 1834u;
+  state.lenovo_cpu_fan.supported = true;
+  state.lenovo_cpu_fan.valid = true;
+  state.lenovo_cpu_fan.rpm = 1834u;
   EXPECT_GT(host_metrics_format_detail_line(&state, 1u, 162u, line, sizeof(line)), 0u);
   EXPECT_NE(std::strstr(line, "POWER 15.5W"), nullptr);
   EXPECT_NE(std::strstr(line, "Lenovo CPU Fan 1834 RPM"), nullptr);

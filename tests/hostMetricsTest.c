@@ -454,9 +454,9 @@ static void fill_detail_state(struct host_metrics_state *state) {
   state->swap_total_gib = 8.;
   state->power_valid = true;
   state->package_power_watts = 15.5;
-  state->lenovo_fan_supported = true;
-  state->lenovo_fan_valid = true;
-  state->lenovo_fan_rpm = 1834u;
+  state->lenovo_cpu_fan.supported = true;
+  state->lenovo_cpu_fan.valid = true;
+  state->lenovo_cpu_fan.rpm = 1834u;
   state->identity_valid = true;
   state->identity.model_valid = true;
   snprintf(state->identity.model, sizeof(state->identity.model), "%s", "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz");
@@ -676,7 +676,7 @@ static void test_detail_field_titles(void) {
 
   // A Lenovo machine keeps the field visible while its privileged helper is
   // unavailable; another vendor has no Lenovo-only field at all.
-  unknown.lenovo_fan_supported = true;
+  unknown.lenovo_cpu_fan.supported = true;
   CHECK(host_metrics_format_detail_line_fields(&unknown, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
                                                HOST_DETAIL_FIELD_MAX) == strlen(line));
   CHECK(reported_title_count(fields, line) == 5u);
@@ -840,18 +840,18 @@ static void test_package_power(void) {
 
 static void test_cpu_fan_rpm(void) {
   unsigned rpm = 99u;
-  CHECK(host_lenovo_fan_parse_rpm_text("1834\n", &rpm));
+  CHECK(hwdash_lenovo_cpu_fan_parse_rpm("1834\n", &rpm));
   CHECK(rpm == 1834u);
-  CHECK(host_lenovo_fan_parse_rpm_text("  30000 \r\n", &rpm));
+  CHECK(hwdash_lenovo_cpu_fan_parse_rpm("  30000 \r\n", &rpm));
   CHECK(rpm == 30000u);
-  CHECK(host_lenovo_fan_parse_rpm_text("0\n", &rpm));
+  CHECK(hwdash_lenovo_cpu_fan_parse_rpm("0\n", &rpm));
   CHECK(rpm == 0u);
-  CHECK(!host_lenovo_fan_parse_rpm_text("30001\n", &rpm));
-  CHECK(!host_lenovo_fan_parse_rpm_text("-100\n", &rpm));
-  CHECK(!host_lenovo_fan_parse_rpm_text("1200 RPM\n", &rpm));
-  CHECK(!host_lenovo_fan_parse_rpm_text("", &rpm));
-  CHECK(!host_lenovo_fan_parse_rpm_text(NULL, &rpm));
-  CHECK(!host_lenovo_fan_parse_rpm_text("1200\n", NULL));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm("30001\n", &rpm));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm("-100\n", &rpm));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm("1200 RPM\n", &rpm));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm("", &rpm));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm(NULL, &rpm));
+  CHECK(!hwdash_lenovo_cpu_fan_parse_rpm("1200\n", NULL));
 }
 
 static void test_history(void) {

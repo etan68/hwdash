@@ -210,13 +210,13 @@ with no such interface all show ``POWER N/A``, never a fabricated ``POWER 0.0W``
 kernel exposes no readable energy counter to a normal user, ``POWER N/A`` is therefore the expected
 display.
 
-On a machine whose DMI system vendor is Lenovo, the block also shows ``Lenovo CPU Fan``. hwdash
-installs ``hwdash-lenovo-cpu-fan-helper.service`` for that field. The service loads the kernel's
-``ec_sys`` module with its default read-only setting, reads the Lenovo EC register pair with a
-high-low-high consistency check, and publishes only the checked RPM value to
-``/run/hwdash/lenovo-cpu-fan-rpm``. hwdash itself remains unprivileged. The helper refuses the EC
-offsets on a non-Lenovo computer, never enables EC writes, and does not invent a fan percentage
-because this source contains RPM only. Non-Lenovo machines do not show this field.
+On a machine whose DMI system vendor is Lenovo, the block also shows ``Lenovo CPU Fan``. HWDash
+installs the generic ``hwdash-helper.service`` for privileged hardware collectors. Its first
+provider reads the Lenovo EC register pair with a high-low-high consistency check and publishes
+only the checked RPM value to ``/run/hwdash/lenovo-cpu-fan-rpm``. The HWDash interface remains
+unprivileged. The provider refuses the Lenovo offsets on other computers, never enables EC writes,
+and does not invent a fan percentage because this source contains RPM only. Non-Lenovo machines do
+not show this field.
 
 If the firmware exposes no active ACPI EC device to ``ec_sys``, the helper falls back to
 ``/dev/port`` and performs the same ``RD_EC`` command/address handshake as P3FanMonitor. The port
@@ -227,8 +227,8 @@ Enable it once after installing hwdash:
 
 ```console
 sudo systemctl daemon-reload
-sudo systemctl enable --now hwdash-lenovo-cpu-fan-helper.service
-systemctl status hwdash-lenovo-cpu-fan-helper.service
+sudo systemctl enable --now hwdash-helper.service
+systemctl status hwdash-helper.service
 cat /run/hwdash/lenovo-cpu-fan-rpm
 ```
 
@@ -407,9 +407,9 @@ cmake --build build -j
 sudo cmake --install build
 ```
 
-The installed user command is ``hwdash``. The installation also provides
-``hwdash-lenovo-cpu-fan-helper.service`` on Linux. Enable that service only when
-Lenovo CPU fan RPM monitoring is wanted.
+The installed user command is ``hwdash``. Linux installations also provide the
+generic ``hwdash-helper.service``. It runs privileged provider modules separately
+from the interface; currently the only provider is Lenovo CPU fan RPM.
 
 For an installation under a user-selected prefix, add
 ``-DCMAKE_INSTALL_PREFIX=/path/to/prefix`` at configure time and omit ``sudo``

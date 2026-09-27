@@ -9,11 +9,11 @@ copyright notices so backend changes remain attributable and mergeable.
 The nvtop-derived accelerator collection layer remains the upstream-facing
 part of the tree:
 
-- `src/extract_gpuinfo*.c`, `src/extract_gcuinfo*.c` and
-  `src/extract_npuinfo*.c` implement vendor backends.
+- `src/collectors/gpu/extract_gpuinfo*.c`, `extract_gcuinfo*.c` and
+  `extract_npuinfo*.c` implement vendor backends.
 - `include/nvtop/extract_gpuinfo_common.h` is their common data contract.
-- `src/extract_gpuinfo.c` registers and refreshes those backends.
-- `src/device_discovery_linux.c` contains shared Linux device discovery.
+- `src/collectors/gpu/extract_gpuinfo.c` registers and refreshes those backends.
+- `src/collectors/gpu/device_discovery_linux.c` contains shared Linux device discovery.
 
 Each compiled vendor source registers a `struct gpu_vendor` constructor with
 the common collector. A newly merged backend therefore enters hwdash through
@@ -24,18 +24,21 @@ metric may require a small interface update before hwdash can display it.
 hwdash-specific code should stay outside vendor backends whenever the metric
 is not supplied by that accelerator:
 
-- `src/host_metrics.c` and `include/nvtop/host_metrics.h` collect and normalize
-  host CPU, RAM, package power and host sensors.
-- `src/lenovo_cpu_fan_helper.c` is the privileged Lenovo EC adapter. It publishes
-  one checked RPM value; the main program remains unprivileged.
+- `src/collectors/host/host_metrics.c` and `include/nvtop/host_metrics.h` collect
+  CPU, RAM, load, frequency and package power through ordinary kernel APIs.
+- `src/collectors/vendor/` contains unprivileged machine-vendor adapters. The
+  Lenovo adapter validates and consumes a value; it never accesses the EC.
+- `src/helper/hardware_helper.c` owns the privileged process lifecycle and
+  atomic publication. Hardware-specific privileged access is implemented by
+  providers under `src/helper/providers/`; Lenovo EC is the first provider.
 - `src/interface*.c`, `src/plot*.c` and the layout helpers own hwdash's device
   sections and presentation.
 
 Lenovo CPU Fan is a host CPU sensor. It must not be added to the NVIDIA, Intel,
-AMD or other accelerator structs. Its adapter feeds the host metrics state,
-which the CPU device section consumes. This preserves the upstream GPU data
-contract and lets new upstream GPU backends arrive without knowing about the
-Lenovo extension.
+AMD or other accelerator structs. The privileged provider publishes a narrow
+value, the unprivileged Lenovo adapter validates it, and the host collector feeds
+it to the CPU section. Future vendor-specific metrics follow the same split;
+providers that need no extra privilege stay entirely under `collectors/vendor`.
 
 ## Remotes
 
