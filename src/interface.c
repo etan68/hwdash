@@ -31,6 +31,7 @@
 #include "nvtop/interface_setup_win.h"
 #include "nvtop/pcie_utilization.h"
 #include "nvtop/plot.h"
+#include "nvtop/plot_geometry.h"
 #include "nvtop/time.h"
 
 #include <assert.h>
@@ -369,15 +370,21 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
                                     nvtop_interface_option *options) {
   unsigned rows = position->sizeY;
   unsigned cols = position->sizeX;
-  cols -= 5;
+  cols -= PLOT_HORIZONTAL_OVERHEAD;
   rows -= 2;
-  plot->plot_window = newwin(rows, cols, position->posY + 1, position->posX + 4);
-  draw_rectangle(plot->win, 3, 0, cols + 2, rows + 2);
-  mvwprintw(plot->win, 1 + rows * 3 / 4, 0, " 25");
-  mvwprintw(plot->win, 1 + rows / 4, 0, " 75");
-  mvwprintw(plot->win, 1 + rows / 2, 0, " 50");
-  mvwprintw(plot->win, 1, 0, "100");
-  mvwprintw(plot->win, rows, 0, "  0");
+  plot->plot_window = newwin(rows, cols, position->posY + 1, position->posX + PLOT_DATA_X_OFFSET);
+  draw_rectangle(plot->win, PLOT_Y_AXIS_COL, 0, cols + 2, rows + 2);
+
+  static const unsigned tick_values[] = {100u, 75u, 50u, 25u, 0u};
+  for (unsigned i = 0; i < sizeof(tick_values) / sizeof(tick_values[0]); ++i) {
+    const int plot_row = nvtop_plot_data_level(rows, tick_values[i]);
+    if (plot_row < 0)
+      continue;
+    const int frame_row = plot_row + 1;
+    mvwprintw(plot->win, frame_row, 0, "%3u", tick_values[i]);
+    mvwaddch(plot->win, frame_row, PLOT_Y_TICK_COL, ACS_HLINE);
+    mvwaddch(plot->win, frame_row, PLOT_Y_AXIS_COL, ACS_RTEE);
+  }
   plot->data = calloc(cols, sizeof(*plot->data));
   plot->num_data = cols;
 
@@ -390,7 +397,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
   char *zeroSec = "0s";
   if (options->plot_left_to_right) {
     char *toPrint = zeroSec;
-    mvwprintw(plot->win, position->sizeY - 1, 4, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET, "%s", toPrint);
 
     int retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                           options->update_interval * cols / 4 / column_divisor / 1000);
@@ -398,7 +405,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols / 2 / column_divisor / 1000);
@@ -406,7 +413,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols * 3 / 4 / column_divisor / 1000);
@@ -414,7 +421,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols / column_divisor / 1000);
@@ -422,7 +429,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols - strlen(toPrint), "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols - strlen(toPrint), "%s", toPrint);
   } else {
     char *toPrint;
     int retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
@@ -431,7 +438,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols * 3 / 4 / column_divisor / 1000);
@@ -439,7 +446,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 4 - strlen(toPrint) / 2, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols / 2 / column_divisor / 1000);
@@ -447,7 +454,7 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols / 2 - strlen(toPrint) / 2, "%s", toPrint);
 
     retval = snprintf(elapsedSeconds, sizeof(elapsedSeconds), "%ds",
                       options->update_interval * cols / 4 / column_divisor / 1000);
@@ -455,10 +462,10 @@ static void initialize_gpu_mem_plot(struct plot_window *plot, const struct windo
       toPrint = err;
     else
       toPrint = elapsedSeconds;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols * 3 / 4 - strlen(toPrint) / 2, "%s", toPrint);
 
     toPrint = zeroSec;
-    mvwprintw(plot->win, position->sizeY - 1, 4 + cols - strlen(toPrint), "%s", toPrint);
+    mvwprintw(plot->win, position->sizeY - 1, PLOT_DATA_X_OFFSET + cols - strlen(toPrint), "%s", toPrint);
   }
   wnoutrefresh(plot->win);
 }
@@ -546,7 +553,7 @@ static void alloc_host_plot(struct nvtop_interface *interface, const struct wind
                             unsigned num_data_lines) {
   memset(&interface->host_plot, 0, sizeof(interface->host_plot));
   interface->has_host_plot = false;
-  if (!position || position->sizeX < 6 || position->sizeY < 3 || num_data_lines == 0)
+  if (!position || position->sizeX <= PLOT_HORIZONTAL_OVERHEAD || position->sizeY < 3 || num_data_lines == 0)
     return;
   interface->host_plot.num_data_lines = num_data_lines;
   interface->host_plot.win = newwin(position->sizeY, position->sizeX, position->posY, position->posX);
@@ -2279,7 +2286,11 @@ static unsigned populate_plot_data_from_ring_buffer(struct list_head *devices, c
                                                     double data[size_data_buff],
                                                     char plot_legend[MAX_LINES_PER_PLOT][PLOT_MAX_LEGEND_SIZE]) {
 
-  memset(data, 0, size_data_buff * sizeof(*data));
+  // Empty history is a gap, not a 0% sample. This keeps a partially filled GPU
+  // history from growing an artificial vertical line at its oldest edge and
+  // matches the CPU/RAM history behavior.
+  for (unsigned i = 0; i < size_data_buff; ++i)
+    data[i] = NAN;
   unsigned total_to_draw = 0;
   for (unsigned i = 0; i < plot_win->num_devices_to_plot; ++i) {
     unsigned dev_id = plot_win->devices_ids[i];

@@ -21,6 +21,7 @@
 
 #include "nvtop/plot.h"
 #include "nvtop/common.h"
+#include "nvtop/plot_geometry.h"
 #include "nvtop/plot_legend.h"
 
 #include <assert.h>
@@ -28,10 +29,6 @@
 #include <stdbool.h>
 #include <string.h>
 #include <tgmath.h>
-
-static inline int data_level(double rows, double data, double increment) {
-  return (int)(rows - round(data / increment));
-}
 
 // A sample that is not a number is a hole in the history: the metric was not
 // available for that sample and it must not be drawn as an idle zero.
@@ -43,17 +40,18 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
     return;
   int rows, cols;
   getmaxyx(win, rows, cols);
-  rows -= 1;
-  double increment = 100. / (double)(rows);
+  if (rows <= (int)PLOT_DATA_TOP_ROW || cols <= 0)
+    return;
 
   assert(num_lines <= MAX_LINES_PER_PLOT && "Cannot plot more than " EXPAND_AND_QUOTE(MAX_LINES_PER_PLOT) " lines");
   static const short plot_line_colors[MAX_LINES_PER_PLOT] = {7, 8, 9, 10};
   unsigned lvl_before[MAX_LINES_PER_PLOT];
   bool has_lvl_before[MAX_LINES_PER_PLOT];
   for (size_t k = 0; k < num_lines; ++k)
-    has_lvl_before[k] = !is_missing_sample(data[k]);
+    has_lvl_before[k] = false;
 
-  for (size_t i = 0; i < num_data || i < (size_t)cols; i += num_lines) {
+  for (size_t i = 0; i + num_lines <= num_data && i < (size_t)cols; i += num_lines) {
+    const unsigned sample_column = (unsigned)(i / num_lines);
     for (unsigned k = 0; k < num_lines; ++k) {
       if (is_missing_sample(data[i + k])) {
         // No value for this line here: leave the place empty and break the
@@ -64,14 +62,26 @@ void nvtop_line_plot(WINDOW *win, size_t num_data, const double *data, unsigned 
       if (!has_lvl_before[k]) {
         // First defined sample of a line, or sample coming back from a hole:
         // there is nothing to connect the sample to, draw it as a point.
-        lvl_before[k] = data_level(rows, data[i + k], increment);
+        lvl_before[k] = (unsigned)nvtop_plot_data_level((unsigned)rows, data[i + k]);
         has_lvl_before[k] = true;
         wcolor_set(win, plot_line_colors[k], NULL);
         mvwhline(win, lvl_before[k], i + k, 0, 1);
         continue;
       }
-      unsigned lvl_now_k = data_level(rows, data[i + k], increment);
+      unsigned lvl_now_k = (unsigned)nvtop_plot_data_level((unsigned)rows, data[i + k]);
       wcolor_set(win, plot_line_colors[k], NULL);
+      // With the ordinary right-to-left time axis the oldest sample leaves at
+      // the left, which is also where the legend is anchored. In the reversed
+      // direction the left edge is the newest edge and must keep its normal
+      // connector.
+      if (legend_left && !nvtop_plot_connect_from_previous(sample_column)) {
+        // Do not preserve the last vertical transition when it reaches the
+        // left edge. The current value starts a clean segment and the old
+        // value leaves the chart without a boundary artifact.
+        lvl_before[k] = lvl_now_k;
+        mvwhline(win, lvl_now_k, i + k, 0, 1);
+        continue;
+      }
       // Three cases: has increased, has decreased and remained level
       if (lvl_before[k] < lvl_now_k || lvl_before[k] > lvl_now_k) {
         // Case 1 and 2: has increased/decreased

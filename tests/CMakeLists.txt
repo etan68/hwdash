@@ -39,6 +39,18 @@ if (BUILD_TESTING)
   target_include_directories(plotLegendTest PRIVATE
     ${PROJECT_SOURCE_DIR}/include)
   add_test(NAME plotLegendTest COMMAND plotLegendTest)
+
+  # The plot geometry keeps the 100% line clear of the legend, aligns every
+  # Y-axis tick with the data scale, and drops the final left-edge connector.
+  add_executable(
+    plotGeometryTest
+    plotGeometryTest.c
+    ${PROJECT_SOURCE_DIR}/src/plot_geometry.c
+  )
+  target_include_directories(plotGeometryTest PRIVATE
+    ${PROJECT_SOURCE_DIR}/include)
+  target_link_libraries(plotGeometryTest PRIVATE m)
+  add_test(NAME plotGeometryTest COMMAND plotGeometryTest)
 endif()
 
 find_package(GTest)

@@ -17,6 +17,7 @@ add_executable(nvtop
   pcie_utilization.c
   time.c
   plot.c
+  plot_geometry.c
   plot_legend.c
   ini.c
 )
