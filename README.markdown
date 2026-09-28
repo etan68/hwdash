@@ -398,7 +398,7 @@ Until hwdash release packages are published, build this repository directly.
 ### Ubuntu / Debian
 
 ```bash
-sudo apt install cmake libncurses-dev libdrm-dev libsystemd-dev git gcc g++
+sudo apt install cmake libncurses-dev libdrm-dev libsystemd-dev libudev-dev git gcc g++
 git clone https://github.com/etan68/hwdash.git
 cd hwdash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
