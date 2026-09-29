@@ -303,6 +303,15 @@ processes using Intel GPUs.
 Intel requires CAP_PERFMON or CAP_SYS_ADMIN capabilities to access the total memory usage, and an accurate GPU frequency.
 you can run `sudo setcap cap_perfmon=ep $(which hwdash)` to grant the necessary permissions or run hwdash as root.
 
+Not every machine knows the name of its Intel GPU. When udev has no
+`ID_MODEL_FROM_DATABASE` entry for the card, hwdash takes the device name from the PCI
+name database that `lspci` reads, which is the optional *libpci* dependency
+(`libpci-dev` on Ubuntu / Debian). Only the name is read from there: no PCI device is
+opened, scanned or read, so the lookup stays unprivileged and never goes online. When
+libpci is missing, when it is turned off with `-DINTEL_PCI_NAME_LOOKUP=OFF`, or when it
+has no entry for the card, the name comes from the sysfs identifiers instead, for
+example `Intel GPU (8086:7D67)`.
+
 ### NVIDIA
 
 The *NVML library* does not support some of the queries for GPUs coming before the
@@ -383,6 +392,8 @@ Several libraries are required for hwdash to use the inherited GPU backends:
 * For NVIDIA: the *NVIDIA Management Library* (*NVML*) which comes with the GPU driver.
   * This queries the GPU for info.
 * For AMD: the libdrm library used to query AMD GPUs through the kernel driver.
+* For Intel: optionally the *libpci* library of pciutils, the name database `lspci`
+  uses, to name a GPU that udev does not know.
 * For METAX: the *MetaX System Management Library* (*MXSML*) which comes with the GPU driver.
   * This queries the GPU for info.
 * For Enflame: the *Enflame Management Library* (*EFML*) which comes with the GCU driver.
@@ -398,7 +409,7 @@ Until hwdash release packages are published, build this repository directly.
 ### Ubuntu / Debian
 
 ```bash
-sudo apt install cmake libncurses-dev libdrm-dev libsystemd-dev libudev-dev git gcc g++
+sudo apt install cmake libncurses-dev libdrm-dev libsystemd-dev libudev-dev libpci-dev git gcc g++
 git clone https://github.com/etan68/hwdash.git
 cd hwdash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -406,6 +417,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 sudo cmake --install build
 ```
+
+``libpci-dev`` is optional: it lets hwdash name an Intel GPU that
+udev does not know from the ``lspci`` name database. The build and the Intel backend work
+without it, naming such a GPU from its PCI identifiers. ``-DINTEL_PCI_NAME_LOOKUP=OFF``
+turns the PCI database lookup off while retaining udev names and the hardware-ID fallback.
 
 The installed user command is ``hwdash``. Linux installations also provide the
 generic ``hwdash-helper.service``. It runs privileged provider modules separately

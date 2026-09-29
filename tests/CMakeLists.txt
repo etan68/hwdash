@@ -55,6 +55,41 @@ if (BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/include)
   target_link_libraries(plotGeometryTest PRIVATE m)
   add_test(NAME plotGeometryTest COMMAND plotGeometryTest)
+
+  # The PCI name check keeps the display-name priority of a card that udev
+  # does not know: the PCI name database first, the sysfs identifiers after
+  # it. No GPU, no udev, no gtest and no network either. The lookup is built
+  # without libpci here so that the identifier name is always predictable.
+  add_executable(
+    pciNameTest
+    pciNameTest.c
+    ${PROJECT_SOURCE_DIR}/src/collectors/gpu/pci_name_lookup.c
+  )
+  target_include_directories(pciNameTest PRIVATE
+    ${PROJECT_SOURCE_DIR}/include)
+  add_test(NAME pciNameTest COMMAND pciNameTest)
+
+  # The same checks with the optional libpci lookup enabled, so that opening
+  # the name database and the fallback of an unknown card are exercised too.
+  # libpci belongs to the Intel backend, so it is not even looked for here
+  # without it; asking again just repeats the answer src/ already got.
+  if(INTEL_SUPPORT AND INTEL_PCI_NAME_LOOKUP)
+    find_package(Libpci QUIET)
+  endif()
+  if(Libpci_FOUND)
+    add_executable(
+      pciNameLibpciTest
+      pciNameTest.c
+      ${PROJECT_SOURCE_DIR}/src/collectors/gpu/pci_name_lookup.c
+    )
+    target_compile_definitions(pciNameLibpciTest PRIVATE
+      HAS_LIBPCI
+      HWDASH_PCI_TEST_WITH_LIBPCI)
+    target_include_directories(pciNameLibpciTest PRIVATE
+      ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(pciNameLibpciTest PRIVATE Libpci::Libpci)
+    add_test(NAME pciNameLibpciTest COMMAND pciNameLibpciTest)
+  endif()
 endif()
 
 find_package(GTest)

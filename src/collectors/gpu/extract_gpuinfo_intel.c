@@ -24,6 +24,8 @@
 #include "nvtop/extract_processinfo_fdinfo.h"
 #include "nvtop/time.h"
 
+#include "hwdash/pci_name_lookup.h"
+
 #include "extract_gpuinfo_intel.h"
 
 #include <assert.h>
@@ -160,6 +162,7 @@ void gpuinfo_intel_shutdown(void) {
     nvtop_device_unref(current->card_device);
     nvtop_device_unref(current->driver_device);
   }
+  hwdash_pci_name_lookup_shutdown();
 }
 
 const char *gpuinfo_intel_last_error_string(void) { return "Err"; }
@@ -250,14 +253,25 @@ bool gpuinfo_intel_get_device_handles(struct list_head *devices_list, unsigned *
 void gpuinfo_intel_populate_static_info(struct gpu_info *_gpu_info) {
   struct gpu_info_intel *gpu_info = container_of(_gpu_info, struct gpu_info_intel, base);
   struct gpuinfo_static_info *static_info = &gpu_info->base.static_info;
-  const char *dev_name;
+  const char *dev_name = NULL;
+  const char *vendor_attr = NULL, *device_attr = NULL;
 
   static_info->integrated_graphics = false;
   static_info->encode_decode_shared = true;
   RESET_ALL(static_info->valid);
 
-  if (nvtop_device_get_property_value(gpu_info->driver_device, "ID_MODEL_FROM_DATABASE", &dev_name) >= 0) {
-    snprintf(static_info->device_name, sizeof(static_info->device_name), "%s", dev_name);
+  if (nvtop_device_get_property_value(gpu_info->driver_device, "ID_MODEL_FROM_DATABASE", &dev_name) < 0)
+    dev_name = NULL;
+
+  // udev does not always know the card; fall back to the PCI name database
+  // and then to the sysfs identifiers of the device.
+  if (nvtop_device_get_sysattr_value(gpu_info->driver_device, "vendor", &vendor_attr) < 0)
+    vendor_attr = NULL;
+  if (nvtop_device_get_sysattr_value(gpu_info->driver_device, "device", &device_attr) < 0)
+    device_attr = NULL;
+
+  if (hwdash_pci_name_lookup(dev_name, vendor_attr, device_attr, "Intel GPU", static_info->device_name,
+                             sizeof(static_info->device_name))) {
     SET_VALID(gpuinfo_device_name_valid, static_info->valid);
     for (size_t idx = 0; idx < sizeof(static_info->device_name) && static_info->device_name[idx] != '\0'; ++idx) {
       if (static_info->device_name[idx] == '[')

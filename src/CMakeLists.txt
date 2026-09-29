@@ -132,6 +132,25 @@ if(INTEL_SUPPORT)
   target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel.c)
   target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel_i915.c)
   target_sources(nvtop PRIVATE collectors/gpu/extract_gpuinfo_intel_xe.c)
+
+  # Name of the Intel GPU: udev can be missing the ID_MODEL_FROM_DATABASE
+  # entry, so fall back to the name database lspci reads. libpci is optional;
+  # without it, or with INTEL_PCI_NAME_LOOKUP=OFF, names come from the sysfs
+  # PCI identifiers instead. See src/collectors/gpu/pci_name_lookup.c.
+  target_sources(nvtop PRIVATE collectors/gpu/pci_name_lookup.c)
+  option(INTEL_PCI_NAME_LOOKUP "Use libpci, the lspci name database, to name Intel GPUs" ON)
+  if(INTEL_PCI_NAME_LOOKUP)
+    find_package(Libpci)
+    if(Libpci_FOUND)
+      message(STATUS "Found libpci; resolving Intel GPU names through the PCI name database")
+      target_compile_definitions(nvtop PRIVATE HAS_LIBPCI)
+      target_link_libraries(nvtop PRIVATE Libpci::Libpci)
+    else()
+      message(STATUS "libpci not found; naming Intel GPUs from the sysfs PCI identifiers")
+    endif()
+  else()
+    message(STATUS "libpci name lookup disabled; naming Intel GPUs from the sysfs PCI identifiers")
+  endif()
 endif()
 
 if(V3D_SUPPORT)

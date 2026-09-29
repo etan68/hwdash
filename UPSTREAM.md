@@ -33,6 +33,13 @@ is not supplied by that accelerator:
   providers under `src/helper/providers/`; Lenovo EC is the first provider.
 - `src/interface*.c`, `src/plot*.c` and the layout helpers own hwdash's device
   sections and presentation.
+- `src/collectors/gpu/pci_name_lookup.c` and `include/hwdash/pci_name_lookup.h`
+  resolve a GPU display name from the udev property, then the PCI name database
+  of `lspci` through the optional libpci dependency, then the sysfs identifiers.
+  The Intel backend calls it from `gpuinfo_intel_populate_static_info` and keeps
+  its own bracket normalization; `src/CMakeLists.txt` looks for libpci only
+  inside the `INTEL_SUPPORT` block. Merging an upstream change to that Intel
+  function should keep both calls.
 
 Lenovo CPU Fan is a host CPU sensor. It must not be added to the NVIDIA, Intel,
 AMD or other accelerator structs. The privileged provider publishes a narrow
