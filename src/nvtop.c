@@ -415,10 +415,10 @@ int main(int argc, char **argv) {
       update_window_size_to_terminal_size(interface);
       break;
     case KEY_F(2):
+    case KEY_F(4):
     case KEY_F(5):
     case KEY_F(9):
     case KEY_F(6):
-    case KEY_F(12):
     case '+':
     case '-':
     case 12: // Ctrl+L

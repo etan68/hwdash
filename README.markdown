@@ -60,20 +60,33 @@ hwdash Options and Interactive Commands
 hwdash has a builtin setup utility that provides a way to specialize the interface to your needs.
 Simply press ``F2`` and select the options that are the best for you.
 
-In the ``Chart`` section you can choose which metrics are plotted, including GPU and memory
-utilization, temperature, power, clocks, and the **PCIe RX / TX load** (the receive and transmit
-throughput as a percentage of the maximum link bandwidth).
+The ``F2`` menu has four sections:
 
-In the ``General`` section you can enable or disable, independently, the **host CPU usage** and the
-**host memory usage** lines of the combined CPU chart (see
-[Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)). Both are enabled by default on
-Linux and disabled elsewhere. The layout is rebuilt as soon as you leave the setup window.
+- **General** (General Display Settings) — monochrome mode, update interval, temperature
+  in Fahrenheit, reverse chart direction.
+- **Devices** (Device Selection) — a combined CPU and RAM toggle and one toggle per detected
+  GPU/NPU to control which devices are monitored.
+- **GPU Display** (GPU Display Settings) — encoder/decoder idle hiding timer, extended GPU
+  information bar, plot line colors, and the GPU Metric Selection checklist (all-GPU tri-state
+  and per-GPU, max 4 metrics).
+- **GPU Processes** (GPU Process List) — show/hide process list, hide HWDash, sort order, sort
+  field, visible columns.
+
+In the GPU Display Settings metric checklist you can choose which metrics are plotted,
+including GPU and memory utilization, temperature, power, clocks, and the **PCIe RX / TX
+load** (the receive and transmit throughput as a percentage of the maximum link bandwidth).
+
+The combined CPU and RAM toggle on the Device Selection page controls the host CPU usage
+and host memory usage lines together (see
+[Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)). Both are enabled by
+default on Linux and disabled elsewhere. The layout is rebuilt as soon as you leave the setup
+window.
 
 ![hwdash Setup Window](/screenshot/Nvtop-config.png)
 
 ### Saving Preferences
 
-You can save the preferences set in the setup window by pressing ``F12``.
+You can save the preferences set in the setup window by pressing ``F4``.
 The preferences will be loaded the next time you run ``hwdash``.
 
 ### hwdash Manual and Command line Options
@@ -261,7 +274,7 @@ busy loop are introduced, and ``-s``/``--sort-by`` style command line paths are 
 
 ### Configuration keys
 
-The preferences saved with ``F12`` (``$XDG_CONFIG_HOME/hwdash/interface.ini``) store the two options
+The preferences saved with ``F4`` (``$XDG_CONFIG_HOME/hwdash/interface.ini``) store the two options
 in the ``[GeneralOption]`` section:
 
 ```ini

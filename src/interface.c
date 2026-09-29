@@ -2146,10 +2146,10 @@ static void update_process_option_win(struct nvtop_interface *interface) {
 }
 
 static const char *option_selection_hidden[] = {
-    "Setup", "Sort", "Kill", "Quit", "Save Config",
+    "Setup", "Save Config", "Sort", "Kill", "Quit",
 };
 static const char *option_selection_hidden_num[] = {
-    "2", "6", "9", "10", "12",
+    "2", "4", "6", "9", "10",
 };
 
 static const char *option_selection_sort[][2] = {
@@ -2513,7 +2513,7 @@ void interface_key(int keyId, struct nvtop_interface *interface) {
       show_setup_window(interface);
     }
     break;
-  case KEY_F(12):
+  case KEY_F(4):
     save_interface_options_to_config_file(interface->total_dev_count, &interface->options);
     break;
   case KEY_F(9):

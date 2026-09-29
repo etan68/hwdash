@@ -1177,7 +1177,7 @@ TEST(HostChartConfig, DefaultsArePlatformAware) {
 #endif
 }
 
-TEST(HostChartConfig, ChartOptionsSurviveSaveAndReload) {
+TEST(HostChartConfig, LegacyCpuAndRamOptionsNormalizeToCombinedToggle) {
   static const char config_path[] = "/tmp/nvtop-host-chart-test.ini";
   struct gpu_info device = {};
   std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
@@ -1208,7 +1208,10 @@ TEST(HostChartConfig, ChartOptionsSurviveSaveAndReload) {
   reloaded.process_fields_displayed = 0;
   interface_options_set_host_usage_defaults(&reloaded);
   ASSERT_TRUE(load_interface_options_from_config_file(1, &reloaded));
-  EXPECT_FALSE(reloaded.show_host_cpu_usage);
+  // The F2 menu exposes CPU and RAM as one option.  Old config files can
+  // still contain different values, so loading either enabled value turns
+  // the combined option on and keeps both persisted fields coherent.
+  EXPECT_TRUE(reloaded.show_host_cpu_usage);
   EXPECT_TRUE(reloaded.show_host_mem_usage);
   std::free(reloaded.config_file_location);
 
