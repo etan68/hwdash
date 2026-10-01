@@ -11,8 +11,7 @@ device-section interface and host monitoring layer.
 This is an independent project and is not an official nvtop release. Existing
 nvtop copyright and license notices are retained in the inherited source files.
 
-Currently supported vendors are AMD (Linux amdgpu driver), Apple (limited M1 &
-M2 support), Huawei (Ascend), Intel (Linux i915/Xe drivers), NVIDIA (Linux
+Currently supported vendors are AMD (Linux amdgpu driver), Apple (Metal backend; limited metrics), Huawei (Ascend), Intel (Linux i915/Xe drivers), NVIDIA (Linux
 proprietary divers), Qualcomm Adreno (Linux MSM driver), Broadcom VideoCore (Linux v3d driver),
 Rockchip, MetaX (MXSML driver), Enflame (Linux EFML driver), Tenstorrent (Linux tt-kmd driver).
 Rockchip, MetaX (MXSML driver), Enflame (Linux EFML driver), Iluvatar CoreX (ixML / libixml).
@@ -60,12 +59,17 @@ hwdash Options and Interactive Commands
 hwdash has a builtin setup utility that provides a way to specialize the interface to your needs.
 Simply press ``F2`` and select the options that are the best for you.
 
-The ``F2`` menu has four sections:
+The ``F2`` menu has five sections:
 
 - **General** (General Display Settings) — monochrome mode, update interval, temperature
   in Fahrenheit, reverse chart direction.
 - **Devices** (Device Selection) — a combined CPU and RAM toggle and one toggle per detected
   GPU/NPU to control which devices are monitored.
+- **CPU Display** (CPU Display Settings) — one checkbox per optional field of the CPU/RAM detail
+  block: model and cores, frequency, load averages, package power, Lenovo CPU fan, available
+  memory and swap. The ``Device CPU`` title, the CPU utilization and the memory usage are never
+  hidden, and the **CPU and RAM** toggle of the Devices page stays the master switch: with it off
+  the block is not drawn at all.
 - **GPU Display** (GPU Display Settings) — encoder/decoder idle hiding timer, extended GPU
   information bar, plot line colors, and the GPU Metric Selection checklist (all-GPU tri-state
   and per-GPU, max 4 metrics).
@@ -79,8 +83,8 @@ load** (the receive and transmit throughput as a percentage of the maximum link 
 The combined CPU and RAM toggle on the Device Selection page controls the host CPU usage
 and host memory usage lines together (see
 [Host CPU and Memory Monitoring](#host-cpu-and-memory-monitoring)). Both are enabled by
-default on Linux and disabled elsewhere. The layout is rebuilt as soon as you leave the setup
-window.
+default on Linux and on macOS, and disabled elsewhere. The layout is rebuilt as soon as you leave
+the setup window.
 
 ![hwdash Setup Window](/screenshot/Nvtop-config.png)
 
@@ -104,7 +108,7 @@ hwdash --help
 Host CPU and Memory Monitoring
 ------------------------------
 
-On Linux, ``hwdash`` reports the whole host next to the GPU metrics. The whole host CPU
+On Linux and on macOS, ``hwdash`` reports the whole host next to the GPU metrics. The whole host CPU
 utilization and the whole host memory utilization share a single **CPU chart**, the way the GPU
 utilization and the GPU memory share a GPU chart: one percentage history line per enabled metric,
 drawn by the same plot renderer, with the same ``0/25/50/75/100`` scale, the same border and the
@@ -183,11 +187,15 @@ CPU  <util>%   FREQ <average GHz>   LOAD <1m> / <5m> / <15m>   POWER <package wa
 RAM  <used>/<total> GiB  <percent>%   AVAIL <available GiB>   SWAP <used>/<total> GiB
 ```
 
-The CPU utilization and the memory usage are exactly the values drawn by the CPU chart. The CPU
-model and the core counts come from ``/proc/cpuinfo`` (with ``/sys/devices/system/cpu/`` for the
-logical threads), the average frequency from the ``cpuinfo_cur_freq`` / ``scaling_cur_freq`` sysfs
-entries, the load averages from ``/proc/loadavg``, and the swap from ``/proc/meminfo``; everything
-refreshes with the normal update interval. Missing or malformed fields show ``N/A``. When the
+The CPU utilization and the memory usage are exactly the values drawn by the CPU chart. On Linux
+the CPU model and the core counts come from ``/proc/cpuinfo`` (with ``/sys/devices/system/cpu/`` for
+the logical threads), the average frequency from the ``cpuinfo_cur_freq`` / ``scaling_cur_freq``
+sysfs entries, the load averages from ``/proc/loadavg``, and the swap from ``/proc/meminfo``. On
+macOS the same fields come from the interfaces of that kernel instead - ``machdep.cpu.brand_string``,
+``hw.physicalcpu`` / ``hw.activecpu``, ``getloadavg`` and ``vm.swapusage`` - and ``FREQ`` and
+``POWER`` stay ``N/A`` because this collector does not implement those measurements
+(see [Platform support](#platform-support)). On either platform everything refreshes with the
+normal update interval, and a missing or malformed field shows ``N/A``. When the
 terminal is too narrow, the block shortens in that order: swap, then the 15m and 5m load averages,
 then the available memory, then the fan speed, package power, frequency and the rest of the static
 CPU information; the CPU utilization and the memory used/total/percentage stay as long as the block
@@ -200,7 +208,11 @@ power for now, neither a per core breakdown nor a curve of the chart.
 
 ### Platform support
 
-Whole host metrics are collected on **Linux only**, from the ``/proc`` filesystem:
+Whole host metrics are collected on **Linux** and on **macOS**, each from the interfaces of its own
+kernel, and never through a layer that imitates the files of the other one: macOS has neither a
+``/proc`` filesystem nor a sysfs, and the collector there does not pretend otherwise.
+
+On **Linux**, from ``/proc``:
 
 - CPU utilization from the aggregate ``cpu`` line of ``/proc/stat``;
 - memory usage from ``MemTotal`` and ``MemAvailable`` in ``/proc/meminfo``.
@@ -248,8 +260,37 @@ cat /run/hwdash/lenovo-cpu-fan-rpm
 If the service stops or the EC sample is incoherent, its output disappears; hwdash also rejects a
 stale output file and displays ``Lenovo CPU Fan N/A``.
 
-Other operating systems keep building; they simply have no host metrics, and the lines default to
-disabled there. If they are enabled by hand on such a platform, the detail block shows ``N/A``
+On **macOS**, from the Mach host ports and the sysctl MIB - ``host_processor_info``,
+``host_statistics64`` and ``sysctlbyname`` - all of them answerable by an unprivileged process, with
+no helper service, no entitlement, no private API and no external tool:
+
+- **CPU utilization** from the cumulative tick counters of each processor
+  (``PROCESSOR_CPU_LOAD_INFO``). The reference is kept **per processor and per sampling state**,
+  because a rate is the delta of one processor between two of its own samples. Another processor
+  count, or a counter that went backwards, rebuilds it and reports no utilization for that interval.
+- **Memory** from ``HOST_VM_INFO64`` and ``hw.memsize``; what is charged, and how the figure differs
+  from ``MemAvailable``, is in [Metric semantics](#metric-semantics).
+- **CPU identity** from ``machdep.cpu.brand_string`` (``hw.model`` where the brand is not answered),
+  ``hw.physicalcpu`` and ``hw.activecpu``. A count the kernel does not answer is left out of the
+  block; it is never guessed from the count the kernel did answer.
+- **Load averages** from ``getloadavg()``, the same three numbers ``uptime`` prints.
+- **Swap** from ``vm.swapusage``, which answers either a pair - where it answers none allocated the
+  block reads ``SWAP 0.00/0.00 GiB`` - or, on some configurations, nothing at all, which reads
+  ``SWAP N/A``.
+
+What the platform does not measure for this process stays ``N/A``, and is not made up out of a
+nearby number:
+
+- ``FREQ``: live frequency collection is not implemented. A nominal frequency from
+  ``hw.cpufrequency`` is not substituted for a current measurement.
+- ``POWER``: package power collection is not implemented. This version does not run
+  ``powermetrics`` or install a privileged macOS helper.
+- CPU temperature and the ``Lenovo CPU Fan`` field, which belongs to the Linux helper service.
+- Per core, per cluster or per frequency domain utilization: as on Linux, the whole host is one
+  device, and the P core / E core split of an Apple Silicon machine is not reported separately.
+
+Every other operating system keeps building; it simply has no host metrics, and the lines default
+to disabled there. If they are enabled by hand on such a platform, the detail block shows ``N/A``
 instead of a fake value, and the chart draws no curve. When a sample cannot be read or is not usable
 (missing or malformed ``/proc`` data, ``MemAvailable`` larger than ``MemTotal``, counter reset, no
 elapsed tick between two refreshes), the detail block displays ``N/A`` and the curve leaves a hole:
@@ -272,6 +313,26 @@ busy loop are introduced, and ``-s``/``--sort-by`` style command line paths are 
   GiB (powers of 1024), the usage as a percentage of ``MemTotal`` and the available memory; the
   legend of the line is its key, ``RAM %``, exactly like the legend of every other chart line.
 
+The macOS collector reports the same fields from its own kernel:
+
+- **CPU (macOS)**: the delta of the tick counters of *each* processor - ``user``, ``nice`` and
+  ``system`` busy, ``idle`` the only idle state - summed over the processors into one whole host
+  rate. There is no ``iowait`` and no ``guest`` accounting on this kernel. A counter that went
+  backwards, or another processor count, restarts the reference.
+- **Memory (macOS)**: the chosen formula, ``used = (internal - purgeable) + wired + compressor`` and
+  ``available = total - used``, where ``internal`` is the resident anonymous memory, ``purgeable`` the
+  part of it a caller declared discardable, ``wired`` what the kernel pinned and ``compressor`` the
+  space the compressed pager occupies **in RAM**. Nothing is counted twice: the pages the compressor
+  holds *uncompressed* are the content of the pages already charged in ``compressor`` and are charged
+  nowhere, and the speculative pages the kernel already accounts among the free ones are not added a
+  second time. A snapshot whose counters cannot be true together - a used above the memory of the
+  machine, a purgeable part bigger than the anonymous whole - is unavailable, not a percentage.
+- **Difference from Linux**: ``MemAvailable`` is the Linux kernel's estimate of memory available
+  for allocation, including its reserves and reclaim heuristics. The macOS ``AVAIL`` field here
+  is simply physical memory minus the chosen used-memory formula; it is not an equivalent kernel
+  estimate or a memory-pressure indicator. Do not compare the two percentages as identical metrics.
+  Swap usage is reported separately.
+
 ### Configuration keys
 
 The preferences saved with ``F4`` (``$XDG_CONFIG_HOME/hwdash/interface.ini``) store the two options
@@ -285,6 +346,23 @@ ShowHostMemUsage = true
 
 Configuration files written by older versions of this fork do not contain these keys; they keep
 working and fall back to the platform defaults above.
+
+The CPU Display settings are stored in their own ``[HostOption]`` section, one key per optional
+field of the CPU/RAM detail block:
+
+```ini
+[HostOption]
+ShowCpuModel = true
+ShowCpuFreq = true
+ShowCpuLoad = true
+ShowCpuPower = true
+ShowCpuFan = true
+ShowRamAvailable = true
+ShowSwap = true
+```
+
+A key is ``true`` when its field is shown and ``false`` when it is hidden; all of them default to
+``true``, and a file without the section keeps every field of the block shown.
 
 GPU Support
 -----------
@@ -347,6 +425,14 @@ hwdash inherits nvtop's initial support for Apple using Metal. This is only supp
 
 **APPLE SUPPORT STATUS**
 - Apple support is still being worked on. Some bugs and limitations may apply.
+- The backend names the device and reads its memory from Metal and the IORegistry, and takes the
+  utilization and the allocated system memory from the ``PerformanceStatistics`` dictionary the driver
+  publishes. That dictionary is a publication rather than a promise: a driver that publishes none, or
+  publishes something that is not the number the key names, leaves the metric ``N/A`` rather than
+  filled in. Temperature, power, clock speeds, fan speed and PCIe link information are not answered by
+  the interfaces the backend has, so they stay ``N/A`` too.
+- The process list is read from the ``AGXDeviceUserClient`` children of the GPU registry entry, so it
+  covers the Apple Silicon AGX driver.
 
 ### Ascend
 
@@ -447,6 +533,49 @@ when that prefix is writable.
 The build system supports ``Release``, ``RelWithDebInfo`` and ``Debug`` build
 types. Debug builds enable the repository's configured diagnostics and
 sanitizers.
+
+### macOS
+
+Verified on Apple M5, 32 GiB, macOS 27.0. Other Mac models and macOS releases have not been
+validated for this change. CPU/RAM, load, swap and available GPU statistics were checked live.
+
+The Command Line Tools and CMake are all it takes: the ncurses of the SDK is the one the build
+finds, and the host and GPU collectors need no other library.
+
+```bash
+brew install cmake
+git clone https://github.com/etan68/hwdash.git
+cd hwdash
+cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build-macos -j
+./build-macos/src/hwdash
+```
+
+On macOS the Apple Metal backend is the only GPU backend built: ``APPLE_SUPPORT`` defaults to ``ON``
+there and every other vendor defaults to ``OFF``. The whole host CPU and memory lines are enabled by
+default, from the Mach and sysctl sources listed in
+[Platform support](#platform-support).
+
+Run the checks:
+
+```bash
+ctest --test-dir build-macos --output-on-failure
+./build-macos/tests/hostMetricsMacTest
+```
+
+The second command is the live one: it samples this machine through the collector, prints the detail
+block it built and checks the result against the same kernel questions asked directly. It also counts
+the Mach ports of the process before and after sixty refreshes, where a send right or a kernel reply
+left behind at a refresh would show up.
+
+An installation is optional; add ``-DCMAKE_INSTALL_PREFIX=/path/to/prefix`` at configure time and
+``cmake --install build-macos`` after the build. ``make uninstall``, the ``hwdash-helper.service``
+and the Lenovo CPU fan provider are Linux only.
+
+Like every other platform, hwdash needs at least one GPU device before it opens a screen: on macOS
+that means Metal has to report a device to the session it runs in. A session that sees no Metal
+device at all - one without a window server, a restricted or sandboxed context - is told
+``No GPU to monitor.`` and exits, host metrics included.
 
 Upstream backend synchronization
 --------------------------------

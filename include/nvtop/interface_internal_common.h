@@ -119,6 +119,7 @@ struct plot_window {
 enum setup_window_section {
   setup_general_selected,
   setup_devices_selected,
+  setup_cpu_display_selected,
   setup_gpu_display_selected,
   setup_process_list_selected,
   setup_window_selection_count

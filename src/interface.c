@@ -653,7 +653,12 @@ static void draw_host_detail(struct nvtop_interface *interface) {
   WINDOW *win = interface->host_detail_window;
   if (!win)
     return;
-  const struct host_metrics_state *state = host_metrics_get_state();
+  // The CPU Display page picks the fields the block shows; the formatter hides
+  // them, reading the mask out of the state it is given. That state belongs to
+  // the refresh loop and is written here, on the main thread, between refreshes.
+  struct host_metrics_state *state = host_metrics_get_state();
+  if (state)
+    state->detail_hidden_mask = interface->options.host_detail_hidden_mask;
   unsigned rows_of_win, cols_of_win;
   getmaxyx(win, rows_of_win, cols_of_win);
   (void)rows_of_win;

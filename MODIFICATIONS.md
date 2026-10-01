@@ -3,11 +3,16 @@
 hwdash is a modified work based on nvtop. The hwdash project began modifying
 the upstream work in September 2026.
 
-The principal modifications as of 2026-09-29 are:
+The principal modifications as of 2026-09-30 are:
 
 - an independent `hwdash` product, executable, configuration and packaging identity;
 - a host CPU and RAM device with details, history and chart rendering;
-- host CPU identity, frequency, load, swap and package-power collection;
+- host CPU identity, frequency, load, swap and package-power collection on Linux,
+  and native macOS CPU utilization, memory, CPU identity, load and swap collection;
+- a CPU Display setup page, with `ShowCpuModel`, `ShowCpuFreq`, `ShowCpuLoad`,
+  `ShowCpuPower`, `ShowCpuFan`, `ShowRamAvailable` and `ShowSwap` keys in a
+  `[HostOption]` section, choosing which optional fields of the CPU/RAM detail
+  block are drawn;
 - section-based terminal layout and chart legend, edge and live-readout changes;
 - a Lenovo CPU fan RPM adapter consisting of an unprivileged vendor collector
   and a provider in the generic privileged hardware helper;

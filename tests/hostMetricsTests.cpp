@@ -1265,3 +1265,279 @@ TEST(HostChartConfig, ConfigWithoutTheKeysKeepsDefaults) {
   std::free(options.config_file_location);
   std::remove(config_path);
 }
+
+// The CPU Display setup page: which optional fields of the CPU detail block are
+// shown, one key of the [HostOption] section per field, and the block the
+// formatter writes for the fields that stay shown.
+
+// How many titles the formatter reported for a line: the interface colors
+// exactly those, so a field that is not reported is not colored either.
+static unsigned reported_title_count(const host_detail_field *fields) {
+  unsigned count = 0u;
+  for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    if (fields[i].length != 0u)
+      ++count;
+  }
+  return count;
+}
+
+TEST(HostCpuDetailConfig, DefaultShowsEveryFieldOfTheBlock) {
+  struct gpu_info device = {};
+  std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
+  LIST_HEAD(devices);
+  list_add_tail(&device.list, &devices);
+
+  nvtop_interface_option options = {};
+  alloc_interface_options_internals(nullptr, 1u, &devices, &options);
+  // Nothing hidden, so that a state the config file says nothing about shows
+  // the whole block.
+  EXPECT_EQ(options.host_detail_hidden_mask, 0u);
+  std::free(options.gpu_specific_opts);
+  std::free(options.config_file_location);
+}
+
+TEST(HostCpuDetailConfig, ConfigWithoutTheSectionKeepsEveryFieldShown) {
+  static const char config_path[] = "/tmp/nvtop-cpu-detail-legacy.ini";
+  FILE *legacy = std::fopen(config_path, "w");
+  ASSERT_NE(legacy, nullptr);
+  std::fprintf(legacy,
+               "[GeneralOption]\n"
+               "UseColor = true\n"
+               "ShowHostCpuUsage = true\n"
+               "ShowHostMemUsage = true\n"
+               "\n[ChartOption]\n"
+               "ReverseChart = false\n"
+               "\n[Device]\n"
+               "Pdev = pci:0000:01:0\n"
+               "Monitor = true\n"
+               "ShownInfo = gpuRate\n");
+  std::fclose(legacy);
+
+  struct gpu_info device = {};
+  std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
+  nvtop_interface_gpu_opts gpu_opts = {};
+  gpu_opts.linkedGpu = &device;
+  gpu_opts.to_draw = plot_default_draw_info();
+
+  // The mask of a startup that showed everything, which is what
+  // alloc_interface_options_internals leaves it at: the file says nothing about
+  // the block, so nothing goes hidden.
+  nvtop_interface_option options = {};
+  options.gpu_specific_opts = &gpu_opts;
+  options.config_file_location = strdup(config_path);
+  options.process_fields_displayed = process_default_displayed_field();
+  options.sort_processes_by = process_memory;
+  options.host_detail_hidden_mask = 0u;
+  ASSERT_TRUE(load_interface_options_from_config_file(1, &options));
+  EXPECT_EQ(options.host_detail_hidden_mask, 0u);
+  std::free(options.config_file_location);
+  std::remove(config_path);
+}
+
+// true if a saved configuration file holds that exact `key = value` line. The
+// keys of the [HostOption] section are checked by name against the written file:
+// reading a saved file back only proves that the writer and the reader agree
+// with each other, not that they use the keys the documentation names.
+static bool config_has_line(const char *path, const char *line) {
+  FILE *file = std::fopen(path, "r");
+  if (!file)
+    return false;
+  char text[256];
+  bool found = false;
+  while (std::fgets(text, sizeof(text), file)) {
+    text[std::strcspn(text, "\r\n")] = '\0';
+    if (std::strcmp(text, line) == 0)
+      found = true;
+  }
+  std::fclose(file);
+  return found;
+}
+
+TEST(HostCpuDetailConfig, SavedConfigReloadsWithTheSameMask) {
+  static const char config_path[] = "/tmp/nvtop-cpu-detail-test.ini";
+  struct gpu_info device = {};
+  std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
+  nvtop_interface_gpu_opts gpu_opts = {};
+  gpu_opts.linkedGpu = &device;
+  gpu_opts.to_draw = plot_default_draw_info();
+
+  const unsigned hidden = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_model_cores) |
+                          HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_load) |
+                          HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_lenovo_fan) |
+                          HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap);
+
+  nvtop_interface_option options = {};
+  options.gpu_specific_opts = &gpu_opts;
+  options.config_file_location = strdup(config_path);
+  ASSERT_NE(options.config_file_location, nullptr);
+  options.update_interval = 1000;
+  options.encode_decode_hiding_timer = 30.;
+  options.sort_processes_by = process_memory;
+  options.process_fields_displayed = process_default_displayed_field();
+  options.use_color = true;
+  interface_options_set_host_usage_defaults(&options);
+  options.host_detail_hidden_mask = hidden;
+
+  ASSERT_TRUE(save_interface_options_to_config_file(1, &options));
+
+  // Every key of the section is written, each one true when its field is shown
+  // and false when it is hidden, under the section the documentation names.
+  EXPECT_TRUE(config_has_line(config_path, "[HostOption]"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowCpuModel = false"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowCpuFreq = true"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowCpuLoad = false"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowCpuPower = true"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowCpuFan = false"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowRamAvailable = true"));
+  EXPECT_TRUE(config_has_line(config_path, "ShowSwap = false"));
+
+  // Reload from the file the same way the startup path does, from a state that
+  // showed everything, so that only the file can hide a field again.
+  nvtop_interface_option reloaded = {};
+  reloaded.gpu_specific_opts = &gpu_opts;
+  reloaded.config_file_location = strdup(config_path);
+  reloaded.process_fields_displayed = 0;
+  ASSERT_TRUE(load_interface_options_from_config_file(1, &reloaded));
+  EXPECT_EQ(reloaded.host_detail_hidden_mask, hidden);
+  std::free(reloaded.config_file_location);
+
+  std::remove(config_path);
+  std::free(options.config_file_location);
+}
+
+TEST(HostCpuDetailConfig, KeysAbsentFromTheSectionKeepTheFieldShown) {
+  static const char config_path[] = "/tmp/nvtop-cpu-detail-partial.ini";
+  FILE *file = std::fopen(config_path, "w");
+  ASSERT_NE(file, nullptr);
+  // A section that names two fields only: the six others are not written about.
+  std::fprintf(file,
+               "[HostOption]\n"
+               "ShowCpuLoad = false\n"
+               "ShowSwap = true\n");
+  std::fclose(file);
+
+  struct gpu_info device = {};
+  std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
+  nvtop_interface_gpu_opts gpu_opts = {};
+  gpu_opts.linkedGpu = &device;
+  gpu_opts.to_draw = plot_default_draw_info();
+
+  nvtop_interface_option options = {};
+  options.gpu_specific_opts = &gpu_opts;
+  options.config_file_location = strdup(config_path);
+  options.process_fields_displayed = process_default_displayed_field();
+  options.sort_processes_by = process_memory;
+  options.host_detail_hidden_mask = 0u;
+  ASSERT_TRUE(load_interface_options_from_config_file(1, &options));
+  EXPECT_EQ(options.host_detail_hidden_mask, HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_load));
+  std::free(options.config_file_location);
+  std::remove(config_path);
+}
+
+TEST(HostCpuDetailConfig, AFalseKeyHidesOnlyItsOwnField) {
+  static const char config_path[] = "/tmp/nvtop-cpu-detail-one.ini";
+  FILE *file = std::fopen(config_path, "w");
+  ASSERT_NE(file, nullptr);
+  std::fprintf(file,
+               "[GeneralOption]\n"
+               "ShowHostCpuUsage = true\n"
+               "ShowHostMemUsage = true\n"
+               "\n[HostOption]\n"
+               "ShowCpuModel = true\n"
+               "ShowCpuFreq = false\n"
+               "ShowCpuLoad = true\n"
+               "ShowCpuPower = true\n"
+               "ShowCpuFan = true\n"
+               "ShowRamAvailable = true\n"
+               "ShowSwap = true\n");
+  std::fclose(file);
+
+  struct gpu_info device = {};
+  std::snprintf(device.pdev, sizeof(device.pdev), "pci:0000:01:0");
+  nvtop_interface_gpu_opts gpu_opts = {};
+  gpu_opts.linkedGpu = &device;
+  gpu_opts.to_draw = plot_default_draw_info();
+
+  nvtop_interface_option options = {};
+  options.gpu_specific_opts = &gpu_opts;
+  options.config_file_location = strdup(config_path);
+  options.process_fields_displayed = process_default_displayed_field();
+  options.sort_processes_by = process_memory;
+  options.host_detail_hidden_mask = 0u;
+  ASSERT_TRUE(load_interface_options_from_config_file(1, &options));
+  EXPECT_EQ(options.host_detail_hidden_mask, HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq));
+  std::free(options.config_file_location);
+  std::remove(config_path);
+}
+
+// The detail block the same state formats with a hidden field: the field is
+// gone from the line, and what the interface colors - the reported titles - is
+// exactly the fields the line still shows.
+TEST(HostDetailBlock, HiddenFieldsLeaveNeitherTextNorTitle) {
+  host_metrics_state state = {};
+  char line[512] = {};
+  host_detail_field fields[HOST_DETAIL_FIELD_MAX] = {};
+
+  state.cpu_valid = true;
+  state.cpu_percent = 12.5;
+  state.memory_valid = true;
+  state.memory_used_gib = 3.21;
+  state.memory_total_gib = 31.26;
+  state.memory_percent = 10.3;
+  state.memory.available_kib = (uint64_t)(28.05 * 1024. * 1024.);
+  state.freq_valid = true;
+  state.cpu_freq_mhz = 3400.;
+  state.load_valid = true;
+  state.load_avg[0] = 0.42;
+  state.load_avg[1] = 0.38;
+  state.load_avg[2] = 0.35;
+  state.swap_valid = true;
+  state.swap_used_gib = 0.5;
+  state.swap_total_gib = 8.;
+  state.power_valid = true;
+  state.package_power_watts = 15.5;
+  state.identity_valid = true;
+  state.identity.model_valid = true;
+  std::snprintf(state.identity.model, sizeof(state.identity.model), "%s", "Apple M2");
+  state.identity.physical_cores = 8u;
+  state.identity.logical_threads = 8u;
+
+  // Nothing hidden: the whole block.
+  host_metrics_format_detail_line(&state, 1u, 162u, line, sizeof(line));
+  EXPECT_NE(std::strstr(line, "FREQ 3.40GHz"), nullptr);
+  EXPECT_NE(std::strstr(line, "LOAD 0.42 / 0.38 / 0.35"), nullptr);
+
+  // The frequency hidden: no FREQ text and no FREQ title left, the rest of the
+  // line where it was.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq);
+  host_metrics_format_detail_line_fields(&state, 1u, 162u, line, sizeof(line), fields, HOST_DETAIL_FIELD_MAX);
+  EXPECT_EQ(std::strstr(line, "FREQ"), nullptr);
+  EXPECT_NE(std::strstr(line, "LOAD 0.42 / 0.38 / 0.35"), nullptr);
+  const char *expected[] = {"CPU", "LOAD", "POWER"};
+  unsigned reported = 0u;
+  for (unsigned i = 0; i < HOST_DETAIL_FIELD_MAX; ++i) {
+    if (fields[i].length == 0u)
+      continue;
+    ASSERT_LT(reported, sizeof(expected) / sizeof(expected[0]));
+    ASSERT_LE(fields[i].offset + fields[i].length, std::strlen(line));
+    const std::string title(line + fields[i].offset, fields[i].length);
+    EXPECT_EQ(title, expected[reported]) << title;
+    ++reported;
+  }
+  EXPECT_EQ(reported, 3u);
+
+  // The model and the core count hidden together: the title of the device stays.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_model_cores);
+  host_metrics_format_detail_line(&state, 0u, 162u, line, sizeof(line));
+  EXPECT_STREQ(line, "Device CPU");
+
+  // The memory fields hidden: the RAM usage stays, as the chart and the block
+  // have to agree on it.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_available) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap);
+  host_metrics_format_detail_line_fields(&state, 2u, 162u, line, sizeof(line), fields, HOST_DETAIL_FIELD_MAX);
+  EXPECT_STREQ(line, "RAM  3.21/31.26 GiB 10.3%");
+  EXPECT_EQ(reported_title_count(fields), 1u);
+  EXPECT_EQ(std::string(line + fields[0].offset, fields[0].length), "RAM");
+}
+

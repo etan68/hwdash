@@ -54,6 +54,8 @@ typedef struct nvtop_interface_option_struct {
   bool hide_processes_list;                         // Hide processes list
   bool show_host_cpu_usage;                         // Draw the whole host CPU utilization in the host chart
   bool show_host_mem_usage;                         // Draw the whole host memory utilization in the host chart
+  unsigned host_detail_hidden_mask;                 // Optional fields of the CPU detail block that are hidden
+                                                    // (enum host_detail_toggle bits); 0 shows them all
   unsigned char gpu_plot_color_idx[MAX_LINES_PER_PLOT]; // index into plot_color_names[] per plot slot
 } nvtop_interface_option;
 

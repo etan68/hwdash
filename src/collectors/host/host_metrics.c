@@ -32,11 +32,19 @@
 #include "nvtop/time.h" // The monotonic clock the power is a rate over
 
 // HOST_METRICS_FORCE_PROC only exists to compile check the /proc code paths on
-// a platform that has no /proc filesystem.
+// a platform that has no /proc filesystem. Asking for it therefore keeps the
+// Linux collector wherever it is asked for, even on such a platform.
 #if defined(__linux__) || defined(HOST_METRICS_FORCE_PROC)
 #define HOST_METRICS_LINUX 1
 #include <dirent.h> // The powercap and hwmon directories are scanned, not guessed
 #include <sys/stat.h>
+#elif defined(__APPLE__)
+// macOS has neither a /proc filesystem nor a sysfs: the whole host is read from
+// the Mach host ports and the sysctl MIB instead, in a translation unit of its
+// own, and never through an adapter that imitates the text of the Linux files.
+// See nvtop/host_metrics_mac.h and collectors/host/host_metrics_mac.c.
+#define HOST_METRICS_MACOS 1
+#include "nvtop/host_metrics_mac.h"
 #endif
 
 #define HOST_METRICS_ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
@@ -84,7 +92,7 @@ static const char *skip_blanks(const char *text);
 static bool parse_u64_token(const char **cursor, uint64_t *value);
 
 bool host_metrics_platform_supported(void) {
-#ifdef HOST_METRICS_LINUX
+#if defined(HOST_METRICS_LINUX) || defined(HOST_METRICS_MACOS)
   return true;
 #else
   return false;
@@ -785,6 +793,11 @@ void host_metrics_release(struct host_metrics_state *state) {
     state->history[i] = NULL;
   }
   state->history_capacity = 0;
+#ifdef HOST_METRICS_MACOS
+  // The tick reference belongs to this state: giving it back here is what lets
+  // another state keep sampling over its own interval.
+  hwdash_host_mac_cpu_release(state);
+#endif
   state->has_last_cpu = false;
   state->cpu_valid = false;
   state->memory_valid = false;
@@ -945,6 +958,12 @@ static unsigned detail_render_line(char *line, size_t line_size, const struct ho
   return needed;
 }
 
+// Whether one optional field of the detail block is hidden, that is, whether the
+// bit the CPU Display setup page sets in the detail hidden mask for it is on.
+static inline bool detail_toggle_hidden(unsigned hidden_mask, enum host_detail_toggle toggle) {
+  return (hidden_mask & HOST_DETAIL_TOGGLE_BIT(toggle)) != 0u;
+}
+
 static unsigned format_detail_line(const struct host_metrics_state *state, unsigned line_index, unsigned width,
                                    char *buffer, size_t size, struct host_detail_field *fields,
                                    unsigned max_fields) {
@@ -968,29 +987,35 @@ static unsigned format_detail_line(const struct host_metrics_state *state, unsig
   const bool power_valid = state && state->power_valid;
   const bool lenovo_fan_valid = state && state->lenovo_cpu_fan.valid;
   const struct host_cpu_identity *identity = state ? &state->identity : NULL;
+  // A field the user hid is never formatted: no segment for it, so nothing to
+  // drop, no title to color and no width spent on it. A state that is not there
+  // hides nothing.
+  const unsigned hidden_mask = state ? state->detail_hidden_mask : 0u;
 
   struct host_detail_segment segments[8];
   unsigned count = 0;
   switch (line_index) {
   case 0: {
     detail_segment(&segments[count++], host_detail_priority_always, false, "Device CPU", "Device CPU");
-    if (identity && identity->model_valid) {
-      // The model is a value, not a field: it has no title to color.
-      detail_segment(&segments[count++], host_detail_priority_static, true, NULL, " [%s]", identity->model);
-      // A model name is worth keeping: it is cut to what fits, with a marker,
-      // before anything else of the line is dropped.
-      segments[count - 1].shrinkable = true;
-    } else {
-      detail_segment(&segments[count++], host_detail_priority_static, true, NULL, " [N/A]");
+    if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_model_cores)) {
+      if (identity && identity->model_valid) {
+        // The model is a value, not a field: it has no title to color.
+        detail_segment(&segments[count++], host_detail_priority_static, true, NULL, " [%s]", identity->model);
+        // A model name is worth keeping: it is cut to what fits, with a marker,
+        // before anything else of the line is dropped.
+        segments[count - 1].shrinkable = true;
+      } else {
+        detail_segment(&segments[count++], host_detail_priority_static, true, NULL, " [N/A]");
+      }
+      char physical[16], logical[16];
+      physical[0] = logical[0] = '\0';
+      if (identity && identity->physical_cores)
+        snprintf(physical, sizeof(physical), "%uC", identity->physical_cores);
+      if (identity && identity->logical_threads)
+        snprintf(logical, sizeof(logical), "%uT", identity->logical_threads);
+      detail_segment(&segments[count++], host_detail_priority_static, true, "CORES", "  CORES %s/%s",
+                     physical[0] ? physical : "N/A", logical[0] ? logical : "N/A");
     }
-    char physical[16], logical[16];
-    physical[0] = logical[0] = '\0';
-    if (identity && identity->physical_cores)
-      snprintf(physical, sizeof(physical), "%uC", identity->physical_cores);
-    if (identity && identity->logical_threads)
-      snprintf(logical, sizeof(logical), "%uT", identity->logical_threads);
-    detail_segment(&segments[count++], host_detail_priority_static, true, "CORES", "  CORES %s/%s",
-                   physical[0] ? physical : "N/A", logical[0] ? logical : "N/A");
     break;
   }
   case 1: {
@@ -999,29 +1024,36 @@ static unsigned format_detail_line(const struct host_metrics_state *state, unsig
                      state->cpu_percent);
     else
       detail_segment(&segments[count++], host_detail_priority_always, false, "CPU", "CPU  N/A");
-    if (freq_valid)
-      detail_segment(&segments[count++], host_detail_priority_static, true, "FREQ", "   FREQ %.2fGHz",
-                     state->cpu_freq_mhz / 1000.);
-    else
-      detail_segment(&segments[count++], host_detail_priority_static, true, "FREQ", "   FREQ N/A");
-    if (load_valid) {
-      detail_segment(&segments[count++], host_detail_priority_static, true, "LOAD", "   LOAD %.2f",
-                     state->load_avg[0]);
-      // The two trailing averages are the continuation of the LOAD field: they
-      // carry no title of their own.
-      detail_segment(&segments[count++], host_detail_priority_load_5m, true, NULL, " / %.2f", state->load_avg[1]);
-      detail_segment(&segments[count++], host_detail_priority_load_15m, true, NULL, " / %.2f", state->load_avg[2]);
-    } else {
-      detail_segment(&segments[count++], host_detail_priority_static, true, "LOAD", "   LOAD N/A");
+    if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_freq)) {
+      if (freq_valid)
+        detail_segment(&segments[count++], host_detail_priority_static, true, "FREQ", "   FREQ %.2fGHz",
+                       state->cpu_freq_mhz / 1000.);
+      else
+        detail_segment(&segments[count++], host_detail_priority_static, true, "FREQ", "   FREQ N/A");
+    }
+    if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_load)) {
+      if (load_valid) {
+        detail_segment(&segments[count++], host_detail_priority_static, true, "LOAD", "   LOAD %.2f",
+                       state->load_avg[0]);
+        // The two trailing averages are the continuation of the LOAD field: they
+        // carry no title of their own, and they go with the field.
+        detail_segment(&segments[count++], host_detail_priority_load_5m, true, NULL, " / %.2f", state->load_avg[1]);
+        detail_segment(&segments[count++], host_detail_priority_load_15m, true, NULL, " / %.2f", state->load_avg[2]);
+      } else {
+        detail_segment(&segments[count++], host_detail_priority_static, true, "LOAD", "   LOAD N/A");
+      }
     }
     // One package, one power, for now: the whole CPU package, not a per core
     // or per plane breakdown, and not a chart curve either.
-    if (power_valid)
-      detail_segment(&segments[count++], host_detail_priority_power, true, "POWER", "   POWER %4.1fW",
-                     state->package_power_watts);
-    else
-      detail_segment(&segments[count++], host_detail_priority_power, true, "POWER", "   POWER N/A");
-    if (state && state->lenovo_cpu_fan.supported) {
+    if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_power)) {
+      if (power_valid)
+        detail_segment(&segments[count++], host_detail_priority_power, true, "POWER", "   POWER %4.1fW",
+                       state->package_power_watts);
+      else
+        detail_segment(&segments[count++], host_detail_priority_power, true, "POWER", "   POWER N/A");
+    }
+    if (state && state->lenovo_cpu_fan.supported &&
+        !detail_toggle_hidden(hidden_mask, host_detail_toggle_lenovo_fan)) {
       if (lenovo_fan_valid)
         detail_segment(&segments[count++], host_detail_priority_lenovo_fan, true, "Lenovo CPU Fan",
                        "   Lenovo CPU Fan %u RPM", state->lenovo_cpu_fan.rpm);
@@ -1035,16 +1067,19 @@ static unsigned format_detail_line(const struct host_metrics_state *state, unsig
     if (memory_valid) {
       detail_segment(&segments[count++], host_detail_priority_always, false, "RAM", "RAM  %.2f/%.2f GiB %4.1f%%",
                      state->memory_used_gib, state->memory_total_gib, state->memory_percent);
-      detail_segment(&segments[count++], host_detail_priority_available, true, "AVAIL", "   AVAIL %.2f GiB",
-                     kib_to_gib(state->memory.available_kib));
+      if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_available))
+        detail_segment(&segments[count++], host_detail_priority_available, true, "AVAIL", "   AVAIL %.2f GiB",
+                       kib_to_gib(state->memory.available_kib));
     } else {
       detail_segment(&segments[count++], host_detail_priority_always, false, "RAM", "RAM  N/A");
     }
-    if (swap_valid)
-      detail_segment(&segments[count++], host_detail_priority_swap, true, "SWAP", "   SWAP %.2f/%.2f GiB",
-                     state->swap_used_gib, state->swap_total_gib);
-    else
-      detail_segment(&segments[count++], host_detail_priority_swap, true, "SWAP", "   SWAP N/A");
+    if (!detail_toggle_hidden(hidden_mask, host_detail_toggle_swap)) {
+      if (swap_valid)
+        detail_segment(&segments[count++], host_detail_priority_swap, true, "SWAP", "   SWAP %.2f/%.2f GiB",
+                       state->swap_used_gib, state->swap_total_gib);
+      else
+        detail_segment(&segments[count++], host_detail_priority_swap, true, "SWAP", "   SWAP N/A");
+    }
     break;
   }
   default:
@@ -1233,6 +1268,29 @@ static bool read_load_average(double load_avg[3]) {
   free(content);
   return parsed;
 }
+#elif defined(HOST_METRICS_MACOS)
+// The macOS readers. The identity, the memory, the swap and the load averages
+// are answered by the collector of the platform; the whole host CPU utilization
+// has no reader here, since its reference is the previous tick sample of each
+// processor. See update_cpu_utilization below.
+
+static bool read_cpu_identity(struct host_cpu_identity *identity) { return hwdash_host_mac_identity(identity); }
+
+// No live frequency and no package power on macOS: what the kernel knows about
+// the frequency of the part is a nameplate, not a measurement of this instant,
+// and neither field is filled with one. Both keep reading N/A.
+static bool read_scaling_frequency(double *mhz, unsigned logical_threads) {
+  (void)mhz;
+  (void)logical_threads;
+  return false;
+}
+
+static bool read_cpuinfo_frequency(double *mhz) {
+  (void)mhz;
+  return false;
+}
+
+static bool read_load_average(double load_avg[3]) { return hwdash_host_mac_load_average(load_avg); }
 #else
 static bool read_cpu_ticks(struct host_cpu_ticks *ticks) {
   (void)ticks;
@@ -1603,19 +1661,19 @@ static void update_cpu_frequency(struct host_metrics_state *state) {
     ++state->freq_probe_failures;
 }
 
-bool host_metrics_update(struct host_metrics_state *state) {
-  if (!state)
-    return false;
-  state->supported = host_metrics_platform_supported();
-  state->cpu_valid = false;
-  state->memory_valid = false;
-  state->swap_valid = false;
-  state->freq_valid = false;
-  state->load_valid = false;
-  state->power_valid = false;
-  if (!state->supported)
-    return false;
-
+// The whole host CPU utilization ////////////////////////////////////
+// The reference of the rate is what the platform answers natively: the aggregate
+// counter pair of /proc/stat on Linux, and on macOS the previous tick sample of
+// every processor, kept by the state that took it.
+static void update_cpu_utilization(struct host_metrics_state *state) {
+#ifdef HOST_METRICS_MACOS
+  double utilization = 0.;
+  if (hwdash_host_mac_cpu_sample(state, &utilization)) {
+    state->cpu_percent = utilization;
+    state->cpu_valid = true;
+    history_push(state, host_metric_cpu, utilization);
+  }
+#else
   struct host_cpu_ticks ticks;
   if (read_cpu_ticks(&ticks)) {
     double utilization;
@@ -1629,35 +1687,73 @@ bool host_metrics_update(struct host_metrics_state *state) {
     state->last_cpu = ticks;
     state->has_last_cpu = true;
   }
+#endif
+}
 
+static void apply_memory(struct host_metrics_state *state, const struct host_memory_info *memory) {
+  double used_gib, total_gib, percent;
+  if (!host_memory_usage(memory, &used_gib, &total_gib, &percent))
+    return;
+  state->memory = *memory;
+  state->memory_used_gib = used_gib;
+  state->memory_total_gib = total_gib;
+  state->memory_percent = percent;
+  state->memory_valid = true;
+  history_push(state, host_metric_memory, percent);
+}
+
+// A usable swap pair and what it is worth in GiB, whichever reading of it the
+// platform answered: an unusable pair is reported as unavailable here and never
+// as a plausible wrap around.
+static void apply_swap(struct host_metrics_state *state, const struct host_swap_info *swap, double used_gib,
+                       double total_gib) {
+  state->swap = *swap;
+  state->swap_used_gib = used_gib;
+  state->swap_total_gib = total_gib;
+  state->swap_valid = true;
+}
+
+// The memory and the swap of the machine. One read of /proc/meminfo feeds both of
+// the Linux entries; the macOS collector answers each of them on its own, and it
+// is the macOS reading of the swap that turns a kernel answering none allocated
+// into a displayed 0/0, the Linux one leaving that pair unavailable.
+static void update_memory_and_swap(struct host_metrics_state *state) {
+  struct host_swap_info swap;
+  double swap_used_gib, swap_total_gib;
+#ifdef HOST_METRICS_MACOS
+  struct host_memory_info memory;
+  if (hwdash_host_mac_memory(&memory))
+    apply_memory(state, &memory);
+  if (hwdash_host_mac_swap(&swap) && host_mac_swap_display(&swap, &swap_used_gib, &swap_total_gib))
+    apply_swap(state, &swap, swap_used_gib, swap_total_gib);
+#else
   char *meminfo = read_meminfo_text();
-  if (meminfo) {
-    struct host_memory_info memory;
-    if (host_memory_parse_meminfo_text(meminfo, &memory)) {
-      double used_gib, total_gib, percent;
-      if (host_memory_usage(&memory, &used_gib, &total_gib, &percent)) {
-        state->memory = memory;
-        state->memory_used_gib = used_gib;
-        state->memory_total_gib = total_gib;
-        state->memory_percent = percent;
-        state->memory_valid = true;
-        history_push(state, host_metric_memory, percent);
-      }
-    }
-    // Used swap is SwapTotal - SwapFree: an inconsistent pair is reported as
-    // unavailable, never as a plausible wrap around.
-    struct host_swap_info swap;
-    if (host_swap_parse_meminfo_text(meminfo, &swap)) {
-      double swap_used_gib, swap_total_gib;
-      if (host_swap_usage(&swap, &swap_used_gib, &swap_total_gib)) {
-        state->swap = swap;
-        state->swap_used_gib = swap_used_gib;
-        state->swap_total_gib = swap_total_gib;
-        state->swap_valid = true;
-      }
-    }
-    free(meminfo);
-  }
+  if (!meminfo)
+    return;
+  struct host_memory_info memory;
+  if (host_memory_parse_meminfo_text(meminfo, &memory))
+    apply_memory(state, &memory);
+  if (host_swap_parse_meminfo_text(meminfo, &swap) && host_swap_usage(&swap, &swap_used_gib, &swap_total_gib))
+    apply_swap(state, &swap, swap_used_gib, swap_total_gib);
+  free(meminfo);
+#endif
+}
+
+bool host_metrics_update(struct host_metrics_state *state) {
+  if (!state)
+    return false;
+  state->supported = host_metrics_platform_supported();
+  state->cpu_valid = false;
+  state->memory_valid = false;
+  state->swap_valid = false;
+  state->freq_valid = false;
+  state->load_valid = false;
+  state->power_valid = false;
+  if (!state->supported)
+    return false;
+
+  update_cpu_utilization(state);
+  update_memory_and_swap(state);
 
   if (!state->identity_probed)
     probe_cpu_identity(state);
@@ -1695,6 +1791,10 @@ struct host_metrics_state *host_metrics_get_state(void) {
 #ifdef HOST_METRICS_LINUX
     if (read_cpu_ticks(&global_host_metrics->last_cpu))
       global_host_metrics->has_last_cpu = true;
+#elif defined(HOST_METRICS_MACOS)
+    // The same idea in the counters of the platform: the reference this state
+    // takes its first deltas against.
+    hwdash_host_mac_cpu_seed(global_host_metrics);
 #endif
   }
   return global_host_metrics;

@@ -1,6 +1,7 @@
 *.o
 *ctags
 build/
+build-macos/
 cmake-build*/
 .vscode
 .idea

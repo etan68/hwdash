@@ -30,7 +30,10 @@
 
 // Whole host metrics (as opposed to the per GPU metrics provided by the
 // vendor backends). The parsing helpers are pure functions of the text they
-// are given so that they can be tested without a live /proc filesystem.
+// are given so that they can be tested without a live /proc filesystem. The
+// whole host is collected on Linux, from /proc and sysfs, and on macOS, from
+// the Mach host ports and the sysctl MIB: see nvtop/host_metrics_mac.h for
+// what the second one means by the memory it reports.
 
 // Number of history samples kept for each host metric.
 #define HOST_METRICS_HISTORY_SIZE 512u
@@ -41,22 +44,28 @@ enum host_metric {
   host_metric_count = 2,
 };
 
-// Aggregate tick counters read from the "cpu " line of /proc/stat.
-// guest and guest_nice are deliberately left out: the kernel already accounts
-// them inside user and nice, adding them again would double count guest time.
+// Aggregate tick counters, as read from the "cpu " line of /proc/stat. guest and
+// guest_nice are left out: the kernel already accounts them inside user and nice,
+// adding them again would double count guest time. The macOS collector samples the
+// per processor Mach counters instead and does not use this pair.
 struct host_cpu_ticks {
   uint64_t total; // Busy and idle ticks (guest time excluded)
   uint64_t idle;  // idle + iowait ticks
 };
 
-// Aggregate memory read from /proc/meminfo. Values are expressed in KiB.
-// Used memory is defined by the kernel as MemTotal - MemAvailable.
+// Aggregate memory, in KiB. On Linux used memory is what the kernel calls MemTotal
+// - MemAvailable; on macOS the same pair comes out of the Mach vm counters with
+// the model of nvtop/host_metrics_mac.h. Both answer the same question and are not
+// the same estimate.
 struct host_memory_info {
   uint64_t total_kib;
   uint64_t available_kib;
 };
 
-// Swap read from /proc/meminfo. Used swap is SwapTotal - SwapFree.
+// Swap. Linux answers SwapTotal and SwapFree and the used swap is their
+// difference; macOS answers a total and a used one and the free swap is their
+// difference. A kernel that will not answer the question at all leaves the swap
+// unavailable, which is not the same thing as one that answers none allocated.
 struct host_swap_info {
   uint64_t total_kib;
   uint64_t free_kib;
@@ -93,9 +102,15 @@ struct host_cpu_identity {
   bool model_valid;
 };
 
+// The reference the CPU utilization of a state is taken against on macOS: the
+// last tick sample of every processor, owned by the state that sampled it. Opaque
+// here, held by nvtop/host_metrics_mac.h, and always null on other platforms.
+struct host_mac_cpu_reference;
+
 struct host_metrics_state {
   struct host_cpu_ticks last_cpu;
   bool has_last_cpu;
+  struct host_mac_cpu_reference *mac_cpu_reference;
   double cpu_percent; // Valid in [0, 100] when cpu_valid
   bool cpu_valid;
   struct host_memory_info memory;
@@ -104,6 +119,10 @@ struct host_metrics_state {
   double memory_percent;
   bool memory_valid;
   bool supported;
+  // The optional fields of the detail block that the interface does not show,
+  // one bit of enum host_detail_toggle per field, as set by the CPU Display
+  // setup page. 0 shows everything, which is what a zero-initialized state is.
+  unsigned detail_hidden_mask;
   // Static identity of the CPU, read once and kept: it does not change while
   // the process runs.
   struct host_cpu_identity identity;
@@ -147,7 +166,10 @@ struct host_metrics_state {
   unsigned history_next[host_metric_count];
 };
 
-// true if the host metrics can be collected on the current platform.
+// true if the host metrics can be collected on the current platform: the Linux
+// collector reads /proc and sysfs, the macOS collector the Mach host ports and the
+// sysctl MIB. The interface enables the CPU device with this, and every other
+// platform leaves the lines off by default and shows N/A.
 bool host_metrics_platform_supported(void);
 
 // Parse the aggregate "cpu " line out of /proc/stat content.
@@ -256,7 +278,27 @@ bool host_power_parse_hwmon_input_text(const char *text, double *watts);
 //   line 2: RAM  <used>/<total> GiB  <percent>%   AVAIL <avail>   SWAP <used>/<total> GiB
 #define HOST_DETAIL_LINE_COUNT 3u
 
+// The optional fields of the detail block, the ones the CPU Display setup page
+// shows a checkbox for: one bit of the detail hidden mask of a state per field.
+// What is never hidden - the Device CPU title, the CPU utilization and the
+// memory used/total/percentage - is not in it.
+enum host_detail_toggle {
+  host_detail_toggle_model_cores,
+  host_detail_toggle_freq,
+  host_detail_toggle_load,
+  host_detail_toggle_power,
+  host_detail_toggle_lenovo_fan,
+  host_detail_toggle_available,
+  host_detail_toggle_swap,
+  host_detail_toggle_count
+};
+
+// The bit of a detail hidden mask that hides one field of the block.
+#define HOST_DETAIL_TOGGLE_BIT(toggle) (1u << (toggle))
+
 // Format one line of the CPU detail block for a block `width` columns wide.
+// A field whose bit is set in the detail hidden mask of the state is not
+// formatted at all: it is never written, and never dropped after being written.
 // The fields that do not fit are dropped in the responsive order: the swap
 // first, then the 5 and 15 minute load averages, then the available memory,
 // then the Lenovo fan speed, package power and static CPU information. The CPU utilization
@@ -302,9 +344,10 @@ const char *host_metric_legend_name(enum host_metric metric);
 
 void host_metrics_release(struct host_metrics_state *state);
 
-// Read the platform files, update the current values and push the valid
-// samples into the histories. Must be called at most once per interface
-// refresh. Returns true if at least one metric is usable.
+// Read the platform - the Linux files, the macOS kernel interfaces -, update
+// the current values and push the valid samples into the histories. Must be
+// called at most once per interface refresh. Returns true if at least one
+// metric is usable.
 bool host_metrics_update(struct host_metrics_state *state);
 
 // Read a single sample of the history of a metric, the way the interface reads

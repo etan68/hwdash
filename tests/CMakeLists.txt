@@ -13,6 +13,46 @@ if (BUILD_TESTING)
   target_link_libraries(hostMetricsTest PRIVATE m)
   add_test(NAME hostMetricsTest COMMAND hostMetricsTest)
 
+  # The /proc code paths are the Linux half of the host collector. On a
+  # platform that has no /proc filesystem they would never be compiled at all,
+  # let alone run, so this target asks for them explicitly: the very same test
+  # source and the very same expectations, with HOST_METRICS_FORCE_PROC on.
+  # Running it on a platform whose /proc is not there keeps the parsers and the
+  # sysfs scans compiled and their results checked, and the live sample simply
+  # reports itself unavailable, which is what an unreadable /proc must do.
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(
+      hostMetricsProcTest
+      hostMetricsTest.c
+      ${PROJECT_SOURCE_DIR}/src/time.c
+      ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics.c
+      ${PROJECT_SOURCE_DIR}/src/collectors/vendor/lenovo_cpu_fan.c
+    )
+    target_compile_definitions(hostMetricsProcTest PRIVATE HOST_METRICS_FORCE_PROC)
+    target_include_directories(hostMetricsProcTest PRIVATE
+      ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(hostMetricsProcTest PRIVATE m)
+    add_test(NAME hostMetricsProcTest COMMAND hostMetricsProcTest)
+  endif()
+
+  # The macOS host collector sampled against this machine: two samples of the
+  # whole host CPU, the memory, the identity of the CPU and the load averages,
+  # each checked against the same kernel questions asked directly. Small, live
+  # and runnable on its own without a GPU, without ncurses and without gtest.
+  if(APPLE)
+    add_executable(
+      hostMetricsMacTest
+      hostMetricsMacTest.c
+      ${PROJECT_SOURCE_DIR}/src/time.c
+      ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics.c
+      ${PROJECT_SOURCE_DIR}/src/collectors/vendor/lenovo_cpu_fan.c
+    )
+    target_include_directories(hostMetricsMacTest PRIVATE
+      ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(hostMetricsMacTest PRIVATE m)
+    add_test(NAME hostMetricsMacTest COMMAND hostMetricsMacTest)
+  endif()
+
   # The section layout checks the shape of the monitoring screen from the top
   # of the terminal to the bottom: no GPU, no ncurses and no gtest either.
   add_executable(
@@ -133,4 +173,18 @@ if (BUILD_TESTING AND GTest_FOUND)
   gtest_discover_tests(hostMetricsTests)
 
 
+endif()
+
+# The macOS collector is the platform half of the host collector: whatever checks
+# host_metrics.c as the program does on that platform has to link it. The forced
+# /proc target is deliberately not one of them: it asks for the Linux collector,
+# which has nothing to do with the Mach one, and it keeps compiling it alone.
+if (APPLE AND BUILD_TESTING)
+  foreach(hwdash_host_target IN ITEMS
+          hostMetricsTest hostMetricsMacTest sectionLayoutTest testLib)
+    if(TARGET ${hwdash_host_target})
+      target_sources(${hwdash_host_target} PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/collectors/host/host_metrics_mac.c)
+    endif()
+  endforeach()
 endif()

@@ -132,6 +132,7 @@ void alloc_interface_options_internals(char *config_location, unsigned num_devic
   options->hide_processes_list = false;
   options->has_gpu_info_bar = false;
   interface_options_set_host_usage_defaults(options);
+  options->host_detail_hidden_mask = 0; // Every field of the CPU detail block shown
   options->gpu_plot_color_idx[0] = 1;  // Cyan
   options->gpu_plot_color_idx[1] = 3;  // Yellow
   options->gpu_plot_color_idx[2] = 2;  // Green
@@ -196,6 +197,18 @@ static const char chart_value_reverse[] = "ReverseChart";
 static const char *chart_value_gpu_plot_color[MAX_LINES_PER_PLOT] = {
     "GpuPlotColor0", "GpuPlotColor1", "GpuPlotColor2", "GpuPlotColor3"};
 
+// The optional fields of the CPU detail block, shown or hidden by the CPU
+// Display setup page. A key is true when the field is shown, so a configuration
+// file that predates the page keeps every field shown.
+static const char host_section[] = "HostOption";
+static const char host_show_cpu_model[] = "ShowCpuModel";
+static const char host_show_cpu_freq[] = "ShowCpuFreq";
+static const char host_show_cpu_load[] = "ShowCpuLoad";
+static const char host_show_cpu_power[] = "ShowCpuPower";
+static const char host_show_cpu_fan[] = "ShowCpuFan";
+static const char host_show_ram_available[] = "ShowRamAvailable";
+static const char host_show_swap[] = "ShowSwap";
+
 static const char *plot_color_names[] = {
     "Red", "Cyan", "Green", "Yellow", "Blue", "Magenta", "White"};
 static const unsigned plot_color_names_count = 7;
@@ -219,6 +232,17 @@ static const char *device_draw_vals[plot_information_count + 1] = {
     "gpuRate",       "gpuMemRate", "encodeRate",   "decodeRate",      "temperature",
     "powerDrawRate", "fanSpeed",   "gpuClockRate", "gpuMemClockRate", "effectiveLoadRate",
     "pcieRxRate",    "pcieTxRate", "hvxUtilRate",  "hmxUtilRate",     "none"};
+
+// Set or clear the bit of the CPU detail hidden mask of a field, depending on
+// whether the configuration file says the field is shown. A value that is
+// neither "true" nor "false" leaves the field as it was, like the other keys.
+static void host_detail_toggle_shown(nvtop_interface_option *options, enum host_detail_toggle toggle,
+                                     const char *value) {
+  if (strcmp(value, "true") == 0)
+    options->host_detail_hidden_mask &= ~HOST_DETAIL_TOGGLE_BIT(toggle);
+  if (strcmp(value, "false") == 0)
+    options->host_detail_hidden_mask |= HOST_DETAIL_TOGGLE_BIT(toggle);
+}
 
 static int nvtop_option_ini_handler(void *user, const char *section, const char *name, const char *value) {
   struct nvtop_option_ini_data *ini_data = (struct nvtop_option_ini_data *)user;
@@ -304,6 +328,23 @@ static int nvtop_option_ini_handler(void *user, const char *section, const char 
         }
       }
     }
+  }
+  // CPU Detail Block Options
+  if (strcmp(section, host_section) == 0) {
+    if (strcmp(name, host_show_cpu_model) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_model_cores, value);
+    if (strcmp(name, host_show_cpu_freq) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_freq, value);
+    if (strcmp(name, host_show_cpu_load) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_load, value);
+    if (strcmp(name, host_show_cpu_power) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_power, value);
+    if (strcmp(name, host_show_cpu_fan) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_lenovo_fan, value);
+    if (strcmp(name, host_show_ram_available) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_available, value);
+    if (strcmp(name, host_show_swap) == 0)
+      host_detail_toggle_shown(ini_data->options, host_detail_toggle_swap, value);
   }
   // Process List Options
   if (strcmp(section, process_list_section) == 0) {
@@ -463,6 +504,24 @@ bool save_interface_options_to_config_file(unsigned total_dev_count, const nvtop
   for (unsigned s = 0; s < MAX_LINES_PER_PLOT; ++s)
     fprintf(config_file, "%s = %s\n", chart_value_gpu_plot_color[s],
             plot_color_names[options->gpu_plot_color_idx[s]]);
+
+  // CPU Detail Block Options
+  fprintf(config_file, "\n[%s]\n", host_section);
+  fprintf(config_file, "%s = %s\n", host_show_cpu_model,
+          boolean_string(!(options->host_detail_hidden_mask &
+                           HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_model_cores))));
+  fprintf(config_file, "%s = %s\n", host_show_cpu_freq,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq))));
+  fprintf(config_file, "%s = %s\n", host_show_cpu_load,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_load))));
+  fprintf(config_file, "%s = %s\n", host_show_cpu_power,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_power))));
+  fprintf(config_file, "%s = %s\n", host_show_cpu_fan,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_lenovo_fan))));
+  fprintf(config_file, "%s = %s\n", host_show_ram_available,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_available))));
+  fprintf(config_file, "%s = %s\n", host_show_swap,
+          boolean_string(!(options->host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap))));
 
   // Process Options
   fprintf(config_file, "\n[%s]\n", process_list_section);

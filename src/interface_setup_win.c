@@ -19,6 +19,7 @@
  *
  */
 
+#include "nvtop/host_metrics.h"
 #include "nvtop/interface.h"
 #include "nvtop/interface_internal_common.h"
 #include "nvtop/interface_options.h"
@@ -29,7 +30,7 @@
 #include <string.h>
 
 static char *setup_window_category_names[setup_window_selection_count] = {
-    "General", "Devices", "GPU Display", "GPU Processes"};
+    "General", "Devices", "CPU Display", "GPU Display", "GPU Processes"};
 
 // All the windows used to display the setup
 enum setup_window_type {
@@ -62,6 +63,32 @@ enum setup_device_options {
 };
 
 static const char *setup_device_host_description = "CPU and RAM";
+
+// CPU Display Settings Options
+// One checkbox per optional field of the CPU detail block. The Device CPU
+// title, the CPU utilization and the memory usage have no checkbox: they are
+// never hidden, and the Device page toggle stays the master switch.
+
+enum setup_cpu_display_options {
+  setup_cpu_display_model_cores,
+  setup_cpu_display_freq,
+  setup_cpu_display_load,
+  setup_cpu_display_power,
+  setup_cpu_display_lenovo_fan,
+  setup_cpu_display_available,
+  setup_cpu_display_swap,
+  setup_cpu_display_options_count
+};
+
+static const char *setup_cpu_display_option_description[setup_cpu_display_options_count] = {
+    "Show CPU model and core count", "Show CPU frequency", "Show load averages", "Show CPU package power",
+    "Show Lenovo CPU fan speed", "Show available memory", "Show swap usage"};
+
+// The field of the detail block each row shows or hides.
+static const enum host_detail_toggle setup_cpu_display_option_toggle[setup_cpu_display_options_count] = {
+    host_detail_toggle_model_cores, host_detail_toggle_freq,       host_detail_toggle_load,
+    host_detail_toggle_power,       host_detail_toggle_lenovo_fan, host_detail_toggle_available,
+    host_detail_toggle_swap};
 
 // GPU Display Settings Options
 
@@ -319,6 +346,52 @@ static void draw_setup_window_devices(unsigned total_dev_count, struct nvtop_int
               interface->options.gpu_specific_opts[devId].linkedGpu->static_info.device_name);
     if (interface->setup_win.indentation_level == 1 && interface->setup_win.options_selected[0] == row)
       mvwchgat(win, row + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
+  }
+
+  wnoutrefresh(win);
+}
+
+// The fields of the CPU detail block, one checkbox each: a checked box is a
+// field the detail block shows. The block keeps its three rows whatever is
+// checked, and the combined CPU and RAM toggle of the Device page stays the
+// master switch: this page only says which fields of the block to draw.
+static void draw_setup_window_cpu_display(struct nvtop_interface *interface) {
+  if (interface->setup_win.indentation_level > 1)
+    interface->setup_win.indentation_level = 1;
+  if (interface->setup_win.indentation_level == 1 &&
+      interface->setup_win.options_selected[0] >= setup_cpu_display_options_count)
+    interface->setup_win.options_selected[0] = setup_cpu_display_options_count - 1;
+
+  WINDOW *win = interface->setup_win.single;
+  wattr_set(win, A_STANDOUT, green_color, NULL);
+  mvwprintw(win, 0, 0, "CPU Display Settings");
+  wstandend(win);
+
+  unsigned int cur_col, maxrows, maxcols, tmp;
+  (void)tmp;
+  getmaxyx(win, maxrows, maxcols);
+  getyx(win, tmp, cur_col);
+  mvwchgat(win, 0, cur_col, maxcols - cur_col, A_STANDOUT, green_color, NULL);
+
+  for (unsigned row = 0; row < setup_cpu_display_options_count; ++row) {
+    enum option_state option_state =
+        !(interface->options.host_detail_hidden_mask & HOST_DETAIL_TOGGLE_BIT(setup_cpu_display_option_toggle[row]));
+    mvwprintw(win, row + 1, 0, "[%c] %s", option_state_char(option_state),
+              setup_cpu_display_option_description[row]);
+    if (interface->setup_win.indentation_level == 1 && interface->setup_win.options_selected[0] == row) {
+      mvwchgat(win, row + 1, 0, 3, A_STANDOUT, cyan_color, NULL);
+    }
+  }
+
+  // The block is only drawn with the CPU device, which the Device page enables.
+  const bool host_displayed = (interface->options.show_host_cpu_usage || interface->options.show_host_mem_usage) &&
+                              host_metrics_platform_supported();
+  if (!host_displayed && setup_cpu_display_options_count + 2u < maxrows) {
+    wattr_set(win, A_NORMAL, magenta_color, NULL);
+    // A narrow terminal truncates the note instead of wrapping it over a row.
+    mvwaddnstr(win, setup_cpu_display_options_count + 2u, 0, "CPU and RAM display is off (enable it in Devices)",
+               (int)maxcols);
+    wstandend(win);
   }
 
   wnoutrefresh(win);
@@ -706,6 +779,9 @@ void draw_setup_window(unsigned devices_count, struct list_head *devices, struct
   case setup_devices_selected:
     draw_setup_window_devices(interface->total_dev_count, interface);
     break;
+  case setup_cpu_display_selected:
+    draw_setup_window_cpu_display(interface);
+    break;
   case setup_gpu_display_selected:
     draw_setup_window_gpu_display(devices_count, devices, interface);
     break;
@@ -867,6 +943,14 @@ void handle_setup_win_keypress(int keyId, struct nvtop_interface *interface) {
                 !interface->options.gpu_specific_opts[dev_idx].doNotMonitor;
             interface->options.has_monitored_set_changed = true;
           }
+        }
+      }
+      // CPU Display Settings
+      if (interface->setup_win.selected_section == setup_cpu_display_selected) {
+        if (interface->setup_win.indentation_level == 1 &&
+            interface->setup_win.options_selected[0] < setup_cpu_display_options_count) {
+          interface->options.host_detail_hidden_mask ^=
+              HOST_DETAIL_TOGGLE_BIT(setup_cpu_display_option_toggle[interface->setup_win.options_selected[0]]);
         }
       }
       // GPU Display Settings

@@ -51,6 +51,9 @@ Monochrome mode, \fBinterface update interval\fR, \fBtemperature in Fahrenheit\f
 .I Devices (Device Selection)
 A combined \fBCPU and RAM\fR toggle for the host metrics chart, and one toggle per detected GPU/NPU to control which devices are monitored.
 .TP
+.I CPU Display (CPU Display Settings)
+One checkbox per optional field of the CPU/RAM detail block: \fBCPU model and core count\fR, \fBCPU frequency\fR, \fBload averages\fR, \fBCPU package power\fR, \fBLenovo CPU fan speed\fR, \fBavailable memory\fR and \fBswap usage\fR. The \fBDevice CPU\fR title, the CPU utilization and the memory usage are never hidden, and the \fBCPU and RAM\fR toggle of the \fIDevices\fR page stays the master switch.
+.TP
 .I GPU Display (GPU Display Settings)
 \fBEncoder/Decoder idle hiding timer\fR, \fBextended GPU information bar\fR, plot line colors, and the \fBGPU Metric Selection\fR checklist. You can select metrics for all GPUs (tri-state) or per-device (max 4 metrics). Available metrics: GPU utilization, GPU memory utilization, encoder rate, decoder rate, temperature, power draw rate, fan speed, GPU clock rate, GPU memory clock rate, effective load rate, and PCIe RX / TX load.
 .TP
@@ -59,7 +62,7 @@ Show/hide process list, \fBhide HWDash process\fR, \fBsort order\fR, \fBsort fie
 
 .SH HOST CPU AND MEMORY MONITORING
 .TP
-On \fBLinux\fR only, \fBhwdash\fR can display the whole host usage in a single \fBCPU chart\fR, the
+On \fBLinux\fR and on \fBmacOS\fR, \fBhwdash\fR can display the whole host usage in a single \fBCPU chart\fR, the
 way the GPU utilization and the GPU memory share a GPU chart. The chart holds one percentage history
 line per enabled metric: the whole host \fBCPU\fR utilization and the whole host \fBmemory\fR
 utilization. The whole host CPU is a device of its own, the \fBCPU device\fR, listed before the GPU
@@ -109,14 +112,31 @@ The CPU utilization is the difference between two successive samples of the aggr
 MemAvailable\fR read from \fI/proc/meminfo\fR. Data that cannot be read, including
 \fBMemAvailable\fR larger than \fBMemTotal\fR, displays \fBN/A\fR in the detail block and leaves a
 hole in the curve: it is never plotted as a zero.
-Both lines are disabled by default on the other platforms.
+.TP
+On \fBmacOS\fR the same fields come from the interfaces of that kernel: the utilization from the
+cumulative tick counters of each processor of \fIPROCESSOR_CPU_LOAD_INFO\fR (\fBuser\fR, \fBnice\fR
+and \fBsystem\fR busy, \fBidle\fR the only idle state), the memory from \fIHOST_VM_INFO64\fR and
+\fIhw.memsize\fR as \fB(internal - purgeable) + wired + compressor\fR pages, the load averages from
+\fBgetloadavg\fR and the swap from \fIvm.swapusage\fR. The reference is kept per processor and per
+sampling state, and restarts - reporting no utilization for that interval - when the processor count
+changes or a counter goes backwards. \fBpurgeable\fR is subtracted from the anonymous memory it is a
+part of, and the compressed pages are charged at the space they occupy in RAM. That figure is not the
+Linux \fBMemAvailable\fR estimate, which the kernel computes with reserves and reclaim heuristics:
+both answer how much memory cannot be handed to a new allocation without going through the pager, not
+the same number. \fIvm.swapusage\fR either answers a pair - where it answers none allocated the block
+reads \fBSWAP 0.00/0.00 GiB\fR - or, on some configurations, nothing at all, which reads \fBSWAP
+N/A\fR. A core count the kernel does not answer stays unknown rather than printed as the thread
+count. Both lines are disabled by default on every other platform.
 .TP
 The detail block above the CPU chart reads \fBDevice CPU [model] CORES physicalC/logicalT\fR, then
 the CPU utilization, the average CPU frequency, the 1/5/15 minute load averages and the power of the
 CPU package in watts, then the memory used/total, the memory percentage, the available memory and
 the swap used/total. The model and the core counts come from \fI/proc/cpuinfo\fR and
-\fI/sys/devices/system/cpu\fR, the frequency from the \fIcpuinfo_cur_freq\fR and
-\fIscaling_cur_freq\fR sysfs entries, the load averages from \fI/proc/loadavg\fR, the swap from
+\fI/sys/devices/system/cpu\fR on Linux, or from \fImachdep.cpu.brand_string\fR (with \fIhw.model\fR
+where the brand is not answered), \fIhw.physicalcpu\fR and \fIhw.activecpu\fR on macOS; the frequency
+from the \fIcpuinfo_cur_freq\fR and \fIscaling_cur_freq\fR sysfs entries, where a machine that has no
+readable one shows \fBFREQ N/A\fR rather than the nominal frequency of the part; the load averages
+from \fI/proc/loadavg\fR or, on macOS, from \fBgetloadavg\fR; the swap from
 \fI/proc/meminfo\fR and the package power from the standard power interfaces of the kernel: the
 powercap (RAPL) zone declaring the package (\fBpackage\fR, \fBpkg\fR, \fBsoc\fR or the AMD \fBamd\fR
 domain, found by its \fIname\fR and not at a fixed path), whose \fIenergy_uj\fR delta over the
@@ -134,6 +154,12 @@ block fits.
 .TP
 The two options are saved with \fBF4\fR in the \fB[GeneralOption]\fR section of \fIinterface.ini\fR
 as \fBShowHostCpuUsage\fR and \fBShowHostMemUsage\fR.
+.TP
+The fields of the CPU Display page are saved in the \fB[HostOption]\fR section, one key per
+optional field of the detail block: \fBShowCpuModel\fR, \fBShowCpuFreq\fR, \fBShowCpuLoad\fR,
+\fBShowCpuPower\fR, \fBShowCpuFan\fR, \fBShowRamAvailable\fR and \fBShowSwap\fR. A key is
+\fBtrue\fR when its field is shown and \fBfalse\fR when it is hidden, and all of them default to
+\fBtrue\fR; a configuration file without that section keeps every field shown.
 
 .SH INTERACTIVE COMMANDS
 .TP

@@ -24,6 +24,17 @@
 
 #include "nvtop/host_metrics.h"
 
+// The macOS collector converts the counters of its kernel into the same KiB pair
+// the Linux one parses out of /proc/meminfo. The conversion is pure, so it is
+// checked here, on the platform it belongs to, without a machine whose memory
+// pressure has to be known first. The forced /proc target asks for the Linux
+// collector alone and is not the place for the converters of the other one.
+#if defined(__APPLE__) && !defined(HOST_METRICS_FORCE_PROC)
+#define HWDASH_TEST_MAC_CONVERTERS 1
+#include "nvtop/host_metrics_mac.h"
+#include <mach/processor_info.h> // The state the idle ticks are the ones of
+#endif
+
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -691,6 +702,152 @@ static void test_detail_field_titles(void) {
                                                fields, HOST_DETAIL_FIELD_MAX) == 0u);
 }
 
+// The optional fields hidden by the CPU Display setup page: a hidden field is
+// never formatted, so it leaves neither text nor title on the line, while the
+// Device CPU title, the CPU utilization and the memory usage are never hidden
+// and the block keeps its three rows.
+static void test_detail_hidden_fields(void) {
+  struct host_metrics_state state;
+  char line[512];
+  char none_hidden[HOST_DETAIL_LINE_COUNT][512];
+  struct host_detail_field fields[HOST_DETAIL_FIELD_MAX];
+
+  fill_detail_state(&state);
+
+  // Nothing hidden reads exactly as the block always did, byte for byte.
+  state.detail_hidden_mask = 0u;
+  for (unsigned line_index = 0; line_index < HOST_DETAIL_LINE_COUNT; ++line_index) {
+    CHECK(host_metrics_format_detail_line(&state, line_index, DETAIL_WIDTH, none_hidden[line_index],
+                                          sizeof(none_hidden[line_index])) == strlen(none_hidden[line_index]));
+    CHECK(host_metrics_format_detail_line(&state, line_index, DETAIL_WIDTH, line, sizeof(line)) ==
+          strlen(none_hidden[line_index]));
+    CHECK(strcmp(line, none_hidden[line_index]) == 0);
+  }
+  CHECK(strcmp(none_hidden[0], "Device CPU [Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz]  CORES 6C/12T") == 0);
+  CHECK(strcmp(none_hidden[1],
+               "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM") == 0);
+  CHECK(strcmp(none_hidden[2], "RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB   SWAP 0.50/8.00 GiB") == 0);
+
+  // One field hidden: the whole field goes, the values around it stay where they
+  // are, and the separators that belonged to the field go with it.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("CPU  12.5%   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM"));
+  CHECK(strcmp(line, "CPU  12.5%   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM") == 0);
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_load);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("CPU  12.5%   FREQ 3.40GHz   POWER 15.5W   Lenovo CPU Fan 1834 RPM"));
+  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   POWER 15.5W   Lenovo CPU Fan 1834 RPM") == 0);
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_power);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   Lenovo CPU Fan 1834 RPM"));
+  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   Lenovo CPU Fan 1834 RPM") == 0);
+  // The fan is a field of its own, not a part of the power one.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_lenovo_fan);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W"));
+  CHECK(strcmp(line, "CPU  12.5%   FREQ 3.40GHz   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W") == 0);
+  // The model and the core count are one field: the title of the device stays.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_model_cores);
+  CHECK(host_metrics_format_detail_line(&state, 0u, DETAIL_WIDTH, line, sizeof(line)) == strlen("Device CPU"));
+  CHECK(strcmp(line, "Device CPU") == 0);
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_available);
+  CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("RAM  3.21/31.26 GiB 10.3%   SWAP 0.50/8.00 GiB"));
+  CHECK(strcmp(line, "RAM  3.21/31.26 GiB 10.3%   SWAP 0.50/8.00 GiB") == 0);
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap);
+  CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB"));
+  CHECK(strcmp(line, "RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB") == 0);
+
+  // Every optional field hidden at once: only what is never hidden is left, on
+  // the three rows the block always has.
+  state.detail_hidden_mask = 0u;
+  for (unsigned field = 0; field < host_detail_toggle_count; ++field)
+    state.detail_hidden_mask |= HOST_DETAIL_TOGGLE_BIT(field);
+  CHECK(host_metrics_format_detail_line(&state, 0u, DETAIL_WIDTH, line, sizeof(line)) == strlen("Device CPU"));
+  CHECK(strcmp(line, "Device CPU") == 0);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) == strlen("CPU  12.5%"));
+  CHECK(strcmp(line, "CPU  12.5%") == 0);
+  CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("RAM  3.21/31.26 GiB 10.3%"));
+  CHECK(strcmp(line, "RAM  3.21/31.26 GiB 10.3%") == 0);
+  // A mask of bits no field of this block knows about hides nothing more.
+  state.detail_hidden_mask = ~0u;
+  CHECK(host_metrics_format_detail_line(&state, 0u, DETAIL_WIDTH, line, sizeof(line)) == strlen("Device CPU"));
+  CHECK(strcmp(line, "Device CPU") == 0);
+  CHECK(host_metrics_format_detail_line(&state, 1u, DETAIL_WIDTH, line, sizeof(line)) == strlen("CPU  12.5%"));
+  CHECK(strcmp(line, "CPU  12.5%") == 0);
+  CHECK(host_metrics_format_detail_line(&state, 2u, DETAIL_WIDTH, line, sizeof(line)) ==
+        strlen("RAM  3.21/31.26 GiB 10.3%"));
+  CHECK(strcmp(line, "RAM  3.21/31.26 GiB 10.3%") == 0);
+
+  // The titles of the line are the fields it shows: the hidden ones are not
+  // reported, so the interface colors no title that is not in the line, and the
+  // titles that are reported still point at the field they name.
+  state.detail_hidden_mask = HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_model_cores) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_load) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_power) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_lenovo_fan) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_available) |
+                             HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap);
+  CHECK(host_metrics_format_detail_line_fields(&state, 0u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 1u);
+  CHECK(fields[0].offset == 0u && fields[0].length == strlen("Device CPU"));
+  CHECK(reported_title_is(fields, line, "Device CPU"));
+  CHECK(!reported_title_is(fields, line, "CORES"));
+
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 1u);
+  CHECK(fields[0].offset == 0u && fields[0].length == strlen("CPU"));
+  CHECK(reported_title_is(fields, line, "CPU"));
+  CHECK(!reported_title_is(fields, line, "FREQ"));
+  CHECK(!reported_title_is(fields, line, "LOAD"));
+  CHECK(!reported_title_is(fields, line, "POWER"));
+  CHECK(!reported_title_is(fields, line, "Lenovo CPU Fan"));
+
+  CHECK(host_metrics_format_detail_line_fields(&state, 2u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(reported_title_count(fields, line) == 1u);
+  CHECK(fields[0].offset == 0u && fields[0].length == strlen("RAM"));
+  CHECK(reported_title_is(fields, line, "RAM"));
+  CHECK(!reported_title_is(fields, line, "AVAIL"));
+  CHECK(!reported_title_is(fields, line, "SWAP"));
+
+  // Some fields hidden, the rest of the line unchanged and its titles intact.
+  state.detail_hidden_mask =
+      HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_freq) | HOST_DETAIL_TOGGLE_BIT(host_detail_toggle_swap);
+  CHECK(host_metrics_format_detail_line_fields(&state, 1u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(strcmp(line, "CPU  12.5%   LOAD 0.42 / 0.38 / 0.35   POWER 15.5W   Lenovo CPU Fan 1834 RPM") == 0);
+  CHECK(reported_title_count(fields, line) == 4u);
+  CHECK(reported_title_is(fields, line, "CPU"));
+  CHECK(reported_title_is(fields, line, "LOAD"));
+  CHECK(reported_title_is(fields, line, "POWER"));
+  CHECK(reported_title_is(fields, line, "Lenovo CPU Fan"));
+  CHECK(!reported_title_is(fields, line, "FREQ"));
+  CHECK(host_metrics_format_detail_line_fields(&state, 2u, DETAIL_WIDTH, line, sizeof(line), fields,
+                                               HOST_DETAIL_FIELD_MAX) == strlen(line));
+  CHECK(strcmp(line, "RAM  3.21/31.26 GiB 10.3%   AVAIL 28.05 GiB") == 0);
+  CHECK(reported_title_count(fields, line) == 2u);
+  CHECK(reported_title_is(fields, line, "RAM"));
+  CHECK(reported_title_is(fields, line, "AVAIL"));
+  CHECK(!reported_title_is(fields, line, "SWAP"));
+
+  // A hidden field leaves the room its values would have taken to the fields
+  // that are shown: the narrow line still keeps the utilization it must keep.
+  host_metrics_format_detail_line(&state, 1u, 24u, line, sizeof(line));
+  CHECK(strlen(line) <= 24u);
+  CHECK(strncmp(line, "CPU  12.5%", 10) == 0);
+
+  // A state that is not there hides nothing of the block.
+  CHECK(host_metrics_format_detail_line(NULL, 1u, DETAIL_WIDTH, line, sizeof(line)) > 0u);
+  CHECK(strcmp(line, "CPU  N/A   FREQ N/A   LOAD N/A   POWER N/A") == 0);
+}
+
 // The package power: the counters, the wrap around, and everything that makes a
 // power untrustworthy. The parsers are pure, so all of this is checked whether
 // or not the machine the test runs on exposes an energy counter.
@@ -838,6 +995,240 @@ static void test_package_power(void) {
   CHECK(nearly_equal(watts, 30.));
 }
 
+#ifdef HWDASH_TEST_MAC_CONVERTERS
+// The macOS converters are pure: they are checked on counters put on a table
+// rather than on a machine whose memory pressure has to be known first. The
+// forced /proc target builds the Linux collector alone and is not their place.
+static void test_mac_memory_model(void) {
+  const uint64_t page = 16384u;                              // the page size of Apple Silicon
+  const uint64_t total = 8ull * 1024ull * 1024ull * 1024ull; // a machine of 8 GiB
+  struct host_memory_info info;
+  struct host_mac_memory_pages pages;
+  memset(&pages, 0, sizeof(pages));
+  pages.page_size = page;
+  pages.total_bytes = total;
+
+  // A machine with nothing charged has all of its memory available.
+  CHECK(host_mac_memory_convert(&pages, &info));
+  CHECK(info.total_kib == total / 1024u);
+  CHECK(info.available_kib == info.total_kib);
+
+  // used = (internal - purgeable) + wired + compressor.
+  pages.internal_pages = 1000u;
+  pages.purgeable_pages = 400u;
+  pages.wired_pages = 300u;
+  pages.compressor_pages = 200u;
+  CHECK(host_mac_memory_convert(&pages, &info));
+  CHECK(info.total_kib == total / 1024u);
+  CHECK(info.available_kib == total / 1024u - (600u + 300u + 200u) * (page / 1024u));
+
+  // purgeable is a part of the anonymous memory it is subtracted from. An answer
+  // where the part is bigger than the whole is not one coherent snapshot: it
+  // reads unavailable rather than a plausible low usage out of a clamp.
+  pages.purgeable_pages = 5000u;
+  CHECK(!host_mac_memory_convert(&pages, &info));
+  pages.purgeable_pages = 1000u; // a part can still be the whole of it
+  CHECK(host_mac_memory_convert(&pages, &info));
+  CHECK(info.available_kib == total / 1024u - (300u + 200u) * (page / 1024u));
+  pages.purgeable_pages = 400u;
+
+  // The pages the compressor holds are the content of the pages already
+  // charged in compressor_pages: charging them too would be the double count,
+  // so the same machine pays the same whatever it holds compressed.
+  struct host_memory_info compressed_once;
+  CHECK(host_mac_memory_convert(&pages, &compressed_once));
+  pages.compressor_uncompressed_pages = 524288u; // a further 8 GiB of content
+  CHECK(host_mac_memory_convert(&pages, &info));
+  CHECK(info.total_kib == compressed_once.total_kib);
+  CHECK(info.available_kib == compressed_once.available_kib);
+
+  // The speculative pages are already counted in the free ones by the kernel:
+  // available is what is left of the machine once the used side is paid for, so
+  // there is no second place they could be added a second time.
+
+  // A machine that is exactly full reads a full machine, and not a refusal.
+  pages.internal_pages = total / page;
+  pages.purgeable_pages = 0u;
+  pages.wired_pages = 0u;
+  pages.compressor_pages = 0u;
+  CHECK(host_mac_memory_convert(&pages, &info));
+  CHECK(info.available_kib == 0u);
+
+  // A machine cannot hold more than it has: an inconsistent snapshot is
+  // unavailable, not a plausible 100%.
+  ++pages.internal_pages;
+  CHECK(!host_mac_memory_convert(&pages, &info));
+
+  // The counters of a machine that does not exist, and the memory of a machine
+  // that has no memory, are refused before any arithmetic.
+  memset(&pages, 0, sizeof(pages));
+  pages.page_size = page;
+  CHECK(!host_mac_memory_convert(&pages, &info)); // no memory at all
+  pages.total_bytes = total;
+  pages.page_size = 0u;
+  CHECK(!host_mac_memory_convert(&pages, &info)); // no page size
+  pages.page_size = total + page;
+  CHECK(!host_mac_memory_convert(&pages, &info)); // a page bigger than the machine
+  pages.page_size = page;
+  CHECK(!host_mac_memory_convert(NULL, &info));
+  CHECK(!host_mac_memory_convert(&pages, NULL));
+
+  // A memory that does not reach one KiB has no percentage to be drawn from it:
+  // a zero total_kib is refused rather than read as a machine that is all there.
+  pages.total_bytes = 512u;
+  pages.page_size = 512u;
+  CHECK(!host_mac_memory_convert(&pages, &info));
+  pages.total_bytes = total;
+  pages.page_size = page;
+
+  // Counters whose sum cannot be represented are refused, not wrapped: a
+  // wrapped sum is a usage that looks like a machine and is an overflow.
+  pages.wired_pages = 0xFFFFFFFFFFFFFFFFull / 2u + 1u;
+  pages.compressor_pages = 0xFFFFFFFFFFFFFFFFull / 2u + 1u;
+  CHECK(!host_mac_memory_convert(&pages, &info));
+
+  // The swap: a kernel that answers none allocated gives a valid zero pair, the
+  // 0/0 the interface displays. A total that is not zero but stays below one KiB
+  // would be indistinguishable from it, and a usage above the total is an
+  // unusable pair: both are refused.
+  struct host_swap_info swap;
+  CHECK(host_mac_swap_convert(0u, 0u, &swap));
+  CHECK(swap.total_kib == 0u && swap.free_kib == 0u);
+  CHECK(!host_mac_swap_convert(0u, 1024u, &swap)); // a used above the swap
+  CHECK(!host_mac_swap_convert(512u, 0u, &swap));  // a total below one KiB
+  CHECK(!host_mac_swap_convert(512u, 512u, &swap));
+  CHECK(!host_mac_swap_convert(1024u, 2048u, &swap));
+  CHECK(!host_mac_swap_convert(2048u, 0u, NULL));
+  CHECK(host_mac_swap_convert(2048u, 0u, &swap));
+  CHECK(swap.total_kib == 2u && swap.free_kib == 2u);
+  CHECK(host_mac_swap_convert(4096u, 4096u, &swap));
+  CHECK(swap.total_kib == 4u && swap.free_kib == 0u);
+  CHECK(host_mac_swap_convert(3072u, 1024u, &swap));
+  CHECK(swap.total_kib == 3u && swap.free_kib == 2u);
+  CHECK(host_mac_swap_convert(2048u, 512u, &swap)); // a used below one KiB is none used
+  CHECK(swap.total_kib == 2u && swap.free_kib == 2u);
+
+  // What the macOS collector displays of those pairs. The zero pair is the 0/0 it
+  // shows, where the Linux reading of a zero total, host_swap_usage, reports no
+  // swap at all; every other pair goes through that same Linux reading.
+  double used_gib = -1., total_gib = -1.;
+  struct host_swap_info none_allocated = {0u, 0u};
+  CHECK(host_mac_swap_display(&none_allocated, &used_gib, &total_gib));
+  CHECK(used_gib == 0. && total_gib == 0.);
+  struct host_swap_info no_swap_to_fill = {0u, 1024u};
+  CHECK(!host_mac_swap_display(&no_swap_to_fill, &used_gib, &total_gib));
+  struct host_swap_info partly_filled = {2048u, 1024u};
+  CHECK(host_mac_swap_display(&partly_filled, &used_gib, &total_gib));
+  CHECK(nearly_equal(used_gib, 1. / 1024.) && nearly_equal(total_gib, 2. / 1024.));
+  struct host_swap_info overflown = {2048u, 4096u};
+  CHECK(!host_mac_swap_display(&overflown, &used_gib, &total_gib));
+  CHECK(!host_mac_swap_display(NULL, &used_gib, &total_gib));
+}
+
+static void test_mac_cpu_ticks(void) {
+  // Two samples of the counters of every processor, as the collector keeps
+  // them: the states in the order the kernel answers them, and the widening of
+  // the sample out of the signed 32 bits it reads them in.
+  struct host_mac_cpu_ticks previous[2], current[2];
+  double utilization = -1.;
+  memset(previous, 0, sizeof(previous));
+  memset(current, 0, sizeof(current));
+
+  // Nothing to take a delta against: the first sample of the counters builds a
+  // reference and reports no rate, whatever the counters hold.
+  current[0].tick[CPU_STATE_USER] = 100u;
+  current[0].tick[CPU_STATE_IDLE] = 100u;
+  CHECK(!host_mac_cpu_ticks_utilization(NULL, 0u, current, 1u, &utilization));
+  CHECK(!host_mac_cpu_ticks_utilization(previous, 0u, current, 1u, &utilization));
+  CHECK(!host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, NULL));
+
+  // A processor busy for half of the interval and idle for the other half.
+  previous[0].tick[CPU_STATE_USER] = 10u;
+  previous[0].tick[CPU_STATE_IDLE] = 20u;
+  current[0].tick[CPU_STATE_USER] = 60u;
+  current[0].tick[CPU_STATE_IDLE] = 70u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  CHECK(nearly_equal(utilization, 50.));
+
+  // user, nice and system are the busy states; idle is the only idle one.
+  memset(previous, 0, sizeof(previous));
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_USER] = 25u;
+  current[0].tick[CPU_STATE_SYSTEM] = 25u;
+  current[0].tick[CPU_STATE_NICE] = 25u;
+  current[0].tick[CPU_STATE_IDLE] = 75u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  CHECK(nearly_equal(utilization, 50.));
+
+  // A machine that never stops and a machine that never starts.
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_USER] = 1000u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  CHECK(nearly_equal(utilization, 100.));
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_IDLE] = 1000u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  CHECK(nearly_equal(utilization, 0.));
+
+  // The two processors of a machine are summed into one whole host rate: one
+  // of them running flat out next to one asleep is a machine at half.
+  memset(previous, 0, sizeof(previous));
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_USER] = 100u;
+  current[1].tick[CPU_STATE_IDLE] = 100u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 2u, current, 2u, &utilization));
+  CHECK(nearly_equal(utilization, 50.));
+
+  // An interval in which no tick moved is not an idle machine: it is no
+  // measurement at all, and a curve that drew it would draw a hole.
+  CHECK(!host_mac_cpu_ticks_utilization(current, 2u, current, 2u, &utilization));
+
+  // Another number of processors is another machine - a hotplug, a wake up -
+  // and the deltas of the one before it say nothing about this one.
+  CHECK(!host_mac_cpu_ticks_utilization(current, 2u, current, 1u, &utilization));
+  CHECK(!host_mac_cpu_ticks_utilization(current, 1u, current, 2u, &utilization));
+
+  // A counter that went backward is not the same counter anymore, be it a
+  // reset, a processor that restarted, or the wrap of the 32 bits the kernel
+  // counts in: the rate of two different counters would be a plausible number
+  // about a machine that never ran it.
+  memset(previous, 0, sizeof(previous));
+  memset(current, 0, sizeof(current));
+  previous[0].tick[CPU_STATE_USER] = 1000u;
+  current[0].tick[CPU_STATE_USER] = 999u;
+  current[0].tick[CPU_STATE_IDLE] = 2000u;
+  CHECK(!host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  memset(previous, 0, sizeof(previous));
+  previous[0].tick[CPU_STATE_USER] = 0xFFFFFFFFu; // the last tick of the kernel type
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_USER] = 1u;
+  current[0].tick[CPU_STATE_IDLE] = 4u;
+  CHECK(!host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+
+  // Passing 2^31 is not a backward counter read the way the sample widens it,
+  // and not a jump of the whole range of the type either: the ticks on both
+  // sides of the line are two apart, which is what the interval is worth.
+  memset(previous, 0, sizeof(previous));
+  previous[0].tick[CPU_STATE_USER] = 0x7FFFFFFFu;
+  previous[0].tick[CPU_STATE_IDLE] = 0x7FFFFFFEu;
+  memset(current, 0, sizeof(current));
+  current[0].tick[CPU_STATE_USER] = 0x7FFFFFFFu + 11u; // the other side of 2^31
+  current[0].tick[CPU_STATE_IDLE] = 0x7FFFFFFEu + 10u;
+  CHECK(host_mac_cpu_ticks_utilization(previous, 1u, current, 1u, &utilization));
+  CHECK(nearly_equal(utilization, 100. * 11. / 21.));
+
+  // Counters whose deltas cannot be summed are refused, not wrapped into a
+  // rate that would look like one.
+  memset(previous, 0, sizeof(previous));
+  memset(current, 0, sizeof(current));
+  for (unsigned cpu = 0u; cpu < 2u; ++cpu) {
+    current[cpu].tick[CPU_STATE_USER] = 0xFFFFFFFFFFFFFFFFull;
+    current[cpu].tick[CPU_STATE_IDLE] = 0xFFFFFFFFFFFFFFFFull;
+  }
+  CHECK(!host_mac_cpu_ticks_utilization(previous, 2u, current, 2u, &utilization));
+}
+#endif // the checks of the macOS converters
+
 static void test_cpu_fan_rpm(void) {
   unsigned rpm = 99u;
   CHECK(hwdash_lenovo_cpu_fan_parse_rpm("1834\n", &rpm));
@@ -945,11 +1336,16 @@ int main(void) {
   test_swap();
   test_detail_block();
   test_detail_field_titles();
+  test_detail_hidden_fields();
   test_package_power();
   test_cpu_fan_rpm();
   test_legend_keys();
   test_history();
   test_update_without_support();
+#ifdef HWDASH_TEST_MAC_CONVERTERS
+  test_mac_memory_model();
+  test_mac_cpu_ticks();
+#endif
   printf("%s: %u checks, %u failures\n", failures ? "FAILED" : "PASSED", checks, failures);
   return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

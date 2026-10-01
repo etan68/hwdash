@@ -54,6 +54,7 @@ if(UNIX AND NOT APPLE)
     info_messages_linux.c)
 elseif(APPLE)
   target_sources(nvtop PRIVATE
+    collectors/host/host_metrics_mac.c
     collectors/gpu/get_process_info_mac.c
     collectors/gpu/extract_processinfo_mac.c
     info_messages_mac.c)
